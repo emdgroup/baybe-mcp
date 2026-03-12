@@ -1,0 +1,206 @@
+"""BayBE MCP Server - exposes BayBE's Bayesian optimization as tools for AI agents."""
+
+from __future__ import annotations
+
+import importlib
+import json
+import pkgutil
+from typing import Any
+
+import attrs
+import baybe
+import pandas as pd
+from baybe.serialization.core import converter
+from mcp.server.fastmcp import FastMCP
+
+# ---------------------------------------------------------------------------
+# Class discovery: build a map of all concrete attrs classes in baybe
+# ---------------------------------------------------------------------------
+
+
+def _discover_baybe_classes() -> dict[str, type]:
+    """Walk the baybe package and collect all attrs classes by name."""
+    name_to_class: dict[str, type] = {}
+    for _, modname, _ in pkgutil.walk_packages(baybe.__path__, prefix="baybe."):
+        try:
+            mod = importlib.import_module(modname)
+        except Exception:
+            continue
+        for attr_name in dir(mod):
+            obj = getattr(mod, attr_name, None)
+            if isinstance(obj, type) and attrs.has(obj):
+                name_to_class[obj.__name__] = obj
+    return name_to_class
+
+
+NAME_TO_CLASS = _discover_baybe_classes()
+
+# ---------------------------------------------------------------------------
+# DataFrame helpers
+# ---------------------------------------------------------------------------
+
+
+def _deserialize_dataframe(raw: str) -> pd.DataFrame:
+    """Deserialize a DataFrame from JSON.
+
+    Supports three formats:
+    - base64: a base64-encoded pickle string (BayBE native)
+    - constructor dict: {"constructor": "from_records", "data": [...]}
+    - records: a plain JSON array [{"col": val}, ...]
+    """
+    parsed: Any = json.loads(raw)
+
+    # base64 string or constructor dict → let BayBE's converter handle it
+    if isinstance(parsed, str) or (
+        isinstance(parsed, dict) and "constructor" in parsed
+    ):
+        return converter.structure(parsed, pd.DataFrame)
+
+    # records format (list of dicts)
+    if isinstance(parsed, list):
+        return pd.DataFrame(parsed)
+
+    raise ValueError(
+        "Unsupported measurements format. Provide a base64 string, "
+        'a dict with "constructor" key, or a list of record dicts.'
+    )
+
+
+def _serialize_dataframe(df: pd.DataFrame, output_format: str) -> str:
+    """Serialize a DataFrame to the requested format."""
+    if output_format == "base64":
+        return json.dumps(converter.unstructure(df))
+    # default: records
+    return json.dumps(df.to_dict(orient="records"))
+
+
+# ---------------------------------------------------------------------------
+# MCP Server
+# ---------------------------------------------------------------------------
+
+mcp = FastMCP("baybe-mcp")
+
+
+@mcp.tool()
+def validate(json_config: str) -> str:
+    """Validate a JSON configuration for a BayBE object.
+
+    Takes a JSON string representing a BayBE object. The JSON must contain a
+    "type" field identifying the concrete class (e.g. "SearchSpace",
+    "CategoricalParameter", "SingleTargetObjective").
+
+    Returns a JSON object with:
+    - "valid": boolean indicating if the config is valid
+    - "message": success confirmation or error details
+    """
+    try:
+        data = json.loads(json_config)
+    except json.JSONDecodeError as exc:
+        return json.dumps({"valid": False, "message": f"Invalid JSON: {exc}"})
+
+    type_name = data.get("type")
+    if type_name is None:
+        return json.dumps(
+            {"valid": False, "message": 'Missing "type" field in config.'}
+        )
+
+    cls = NAME_TO_CLASS.get(type_name)
+    if cls is None:
+        return json.dumps(
+            {
+                "valid": False,
+                "message": f"Unknown BayBE type: '{type_name}'. "
+                f"Available types: {sorted(NAME_TO_CLASS.keys())}",
+            }
+        )
+
+    try:
+        converter.structure(data, cls)
+    except Exception as exc:
+        return json.dumps({"valid": False, "message": f"Validation error: {exc}"})
+
+    return json.dumps({"valid": True, "message": f"Valid {type_name} configuration."})
+
+
+@mcp.tool()
+def recommend(
+    batch_size: int,
+    searchspace_json: str,
+    objective_json: str,
+    measurements_json: str | None = None,
+    recommender_json: str | None = None,
+    pending_experiments_json: str | None = None,
+    output_format: str = "records",
+) -> str:
+    """Get stateless Bayesian optimization recommendations.
+
+    Performs a single recommendation step without maintaining any server-side
+    state (no Campaign object). All context must be passed explicitly.
+
+    Args:
+        batch_size: Number of experiments to recommend.
+        searchspace_json: JSON-serialized BayBE SearchSpace.
+        objective_json: JSON-serialized BayBE Objective.
+        measurements_json: Optional JSON-serialized DataFrame of past
+            measurements. Supports three formats: base64 (BayBE native),
+            constructor dict, or records ([{"col": val}, ...]).
+        recommender_json: Optional JSON-serialized recommender config.
+            Defaults to TwoPhaseMetaRecommender.
+        pending_experiments_json: Optional JSON-serialized DataFrame of
+            pending experiments (same formats as measurements).
+        output_format: Output format for recommendations: "records"
+            (default, list of dicts) or "base64" (BayBE native).
+
+    Returns:
+        JSON string with recommended experiments or error details.
+    """
+    from baybe.objectives.base import Objective
+    from baybe.recommenders.meta.sequential import TwoPhaseMetaRecommender
+    from baybe.searchspace.core import SearchSpace
+
+    try:
+        searchspace = SearchSpace.from_json(searchspace_json)
+        objective = Objective.from_json(objective_json)
+
+        measurements = None
+        if measurements_json is not None:
+            measurements = _deserialize_dataframe(measurements_json)
+
+        pending_experiments = None
+        if pending_experiments_json is not None:
+            pending_experiments = _deserialize_dataframe(pending_experiments_json)
+
+        if recommender_json is not None:
+            rec_data = json.loads(recommender_json)
+            type_name = rec_data.get("type")
+            if type_name is None:
+                return json.dumps(
+                    {"error": 'Missing "type" field in recommender config.'}
+                )
+            cls = NAME_TO_CLASS.get(type_name)
+            if cls is None:
+                return json.dumps({"error": f"Unknown recommender type: '{type_name}'"})
+            recommender = converter.structure(rec_data, cls)
+        else:
+            recommender = TwoPhaseMetaRecommender()
+
+        result = recommender.recommend(
+            batch_size=batch_size,
+            searchspace=searchspace,
+            objective=objective,
+            measurements=measurements,
+            pending_experiments=pending_experiments,
+        )
+
+        return _serialize_dataframe(result, output_format)
+
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    mcp.run()
