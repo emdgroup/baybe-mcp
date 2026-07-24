@@ -26,11 +26,80 @@ uv pip list                                                # all installed packa
 
 ## Running the server
 
+The server supports two transports. Run `--help` to see all options
+(`--transport`, `--host`, `--port`, `--log-level`).
+
+### stdio (local)
+
+The MCP client spawns the server as a subprocess and talks over stdin/stdout:
+
 ```bash
 uv run python -m baybe_mcp.server
 ```
 
-This starts the MCP server on stdio (the default MCP transport).
+### HTTP (remote)
+
+The server runs as a persistent process and clients connect by URL. This is the
+mode used for hosting the server remotely:
+
+```bash
+uv run python -m baybe_mcp.server --transport streamable-http
+```
+
+This serves the MCP endpoint at `http://127.0.0.1:8000/mcp`. Use `--host` /
+`--port` to change the bind address, and `--log-level DEBUG` to see request and
+tool traffic while debugging.
+
+Notes:
+- In production, only the URL changes (e.g. `https://your-host.example.com/mcp`);
+  you would additionally add TLS and authentication.
+- Binding beyond localhost triggers the SDK's DNS-rebinding protection, which
+  rejects unknown hosts by default.
+- A running HTTP server must be **restarted** to pick up code changes.
+
+## Connecting from OpenCode
+
+Add the server to your OpenCode config (global `~/.config/opencode/opencode.json`
+or a project-level `opencode.json`).
+
+### stdio
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "baybe": {
+      "type": "local",
+      "command": ["uv", "run", "--directory", "/absolute/path/to/baybe-mcp", "python", "-m", "baybe_mcp.server"],
+      "enabled": true,
+      "timeout": 30000
+    }
+  }
+}
+```
+
+The raised `timeout` accounts for the slow initial import of BayBE and PyTorch,
+which exceeds OpenCode's 5000ms default.
+
+### HTTP (remote)
+
+Start the server in HTTP mode first, then point OpenCode at its URL:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "baybe": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8000/mcp",
+      "enabled": true
+    }
+  }
+}
+```
+
+Once connected, the `baybe` tools are available to the agent alongside its
+built-in tools.
 
 ## Tools
 
