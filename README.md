@@ -10,6 +10,20 @@ Requires Python >= 3.10 and [uv](https://docs.astral.sh/uv/).
 uv sync
 ```
 
+BayBE is pinned to an exact version (`baybe==0.15.0`) in `pyproject.toml`, and the fully resolved dependency set is committed in `uv.lock`.
+
+### Checking installed versions
+
+Any user can inspect which versions are actually installed:
+
+```bash
+uv run python -c "import baybe; print(baybe.__version__)"  # BayBE version
+uv pip show baybe mcp                                      # specific packages
+uv pip list                                                # all installed packages
+```
+
+`uv.lock` is the source of truth for the exact resolved versions of all dependencies.
+
 ## Running the server
 
 ```bash
