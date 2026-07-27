@@ -203,9 +203,54 @@ def recommend(
 # ---------------------------------------------------------------------------
 
 
+def _ensure_resources(args) -> None:
+    """Ensure the resource cache is present and current before serving.
+
+    Logic:
+    - ``--rebuild-resources``: always rebuild.
+    - valid cache: use it.
+    - stale/missing cache: rebuild if online, otherwise warn and serve
+      degraded (resources fall back to live introspection / links).
+    - ``--use-cache``: require a valid cache; error if stale/missing.
+    """
+    import logging
+
+    from baybe_mcp.cache import is_cache_valid, resolve_cache_dir
+    from baybe_mcp.net import is_online
+    from baybe_mcp.resources import build_resources
+
+    logger = logging.getLogger(__name__)
+    cache_dir = resolve_cache_dir(args.cache_dir)
+
+    if args.rebuild_resources:
+        build_resources(cache_dir=cache_dir)
+        return
+
+    if is_cache_valid(cache_dir):
+        logger.info("Using cached resources at %s", cache_dir)
+        return
+
+    if args.use_cache:
+        raise SystemExit(
+            f"No valid resource cache at {cache_dir} (built for a different "
+            "BayBE version or format). Run the 'build' command first, or drop "
+            "--use-cache to allow rebuilding."
+        )
+
+    if is_online():
+        logger.info("Resource cache stale/missing; rebuilding.")
+        build_resources(cache_dir=cache_dir)
+    else:
+        logger.warning(
+            "Resource cache stale/missing and no network available; serving "
+            "with degraded resources (live introspection and doc links only)."
+        )
+
+
 def _run_server(args) -> None:
     """Start the MCP server with the given parsed arguments."""
     mcp.settings.log_level = args.log_level
+    _ensure_resources(args)
     if args.transport == "streamable-http":
         mcp.settings.host = args.host
         mcp.settings.port = args.port
@@ -258,6 +303,21 @@ def main(argv: list[str] | None = None) -> None:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         default="INFO",
         help="Logging level (default: INFO).",
+    )
+    run_parser.add_argument(
+        "--cache-dir",
+        default=None,
+        help="Cache directory (default: .baybe_mcp_cache in the current dir).",
+    )
+    run_parser.add_argument(
+        "--rebuild-resources",
+        action="store_true",
+        help="Rebuild the resource cache before serving.",
+    )
+    run_parser.add_argument(
+        "--use-cache",
+        action="store_true",
+        help="Require a valid cache; error instead of rebuilding (offline use).",
     )
 
     build_parser = subparsers.add_parser(
