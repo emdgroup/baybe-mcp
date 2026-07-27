@@ -193,6 +193,31 @@ def _build_docs(cache_dir) -> None:
     (cache_dir / "docs.json").write_text(json.dumps(_docs_links(), indent=2))
 
 
+@mcp.resource("baybe://guide/serialization")
+def serialization_guide_resource() -> str:
+    """Return the BayBE serialization guide for the installed version.
+
+    Served from cache if available; otherwise fetched live, with a link
+    fallback when offline.
+    """
+    cached = _read_cached_json("guide_serialization.json")
+    if cached is not None:
+        return json.dumps(cached)
+
+    from baybe_mcp.guide import build_guide
+
+    return json.dumps(build_guide())
+
+
+def _build_guide(cache_dir) -> None:
+    """Cache builder for baybe://guide/serialization."""
+    from baybe_mcp.guide import build_guide
+
+    (cache_dir / "guide_serialization.json").write_text(
+        json.dumps(build_guide(), indent=2)
+    )
+
+
 @mcp.tool()
 def validate(json_config: str) -> str:
     """Validate a JSON configuration for a BayBE object.
@@ -319,6 +344,7 @@ from baybe_mcp.resources import register_builder  # noqa: E402
 register_builder("types", _build_types)
 register_builder("schema", _build_schema)
 register_builder("docs", _build_docs)
+register_builder("guide", _build_guide)
 
 
 # ---------------------------------------------------------------------------
