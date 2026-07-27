@@ -134,7 +134,7 @@ built-in tools.
 Validates a JSON configuration for any BayBE object. Useful for agents to check their configs before passing them to `recommend`.
 
 **Input:**
-- `json_config` (string): JSON string with a `"type"` field identifying the concrete BayBE class.
+- `json_config` (JSON object or string): a config with a `"type"` field identifying the concrete BayBE class.
 
 **Returns:** JSON with `"valid"` (bool) and `"message"` (string).
 
@@ -150,6 +150,10 @@ Validates a JSON configuration for any BayBE object. Useful for agents to check 
 ### `recommend`
 
 Performs a stateless Bayesian optimization recommendation. No Campaign or server-side state -- all context is passed per call.
+
+Config and measurement inputs accept either a JSON object/array or a JSON
+string; both are handled transparently (some MCP clients auto-deserialize valid
+JSON arguments).
 
 **Inputs:**
 | Parameter | Type | Required | Description |
