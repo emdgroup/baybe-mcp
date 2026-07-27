@@ -218,6 +218,58 @@ def _build_guide(cache_dir) -> None:
     )
 
 
+@mcp.resource("baybe://examples")
+def examples_index_resource() -> str:
+    """Return the index of BayBE example scenarios (topics and files)."""
+    cached = _read_cached_json("examples_index.json")
+    if cached is not None:
+        return json.dumps(cached)
+
+    from baybe_mcp.examples import build_examples_index
+
+    return json.dumps(build_examples_index())
+
+
+@mcp.resource("baybe://examples/{topic}/{filename}")
+def example_file_resource(topic: str, filename: str) -> str:
+    """Return the raw content of a single example scenario file.
+
+    Fetched lazily and cached on first access.
+    """
+    from pathlib import Path
+
+    from baybe_mcp.cache import resolve_cache_dir
+
+    rel = f"examples/{topic}/{filename}"
+    cache_path = resolve_cache_dir(_CACHE_DIR) / rel
+    if cache_path.is_file():
+        return cache_path.read_text()
+
+    from baybe_mcp.examples import fetch_example
+
+    content = fetch_example(topic, filename)
+    if content is None:
+        return json.dumps(
+            {"error": f"Could not fetch example {topic}/{filename} (offline?)."}
+        )
+
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(content)
+    except OSError:
+        pass
+    return content
+
+
+def _build_examples(cache_dir) -> None:
+    """Cache builder for the examples index (files fetched lazily)."""
+    from baybe_mcp.examples import build_examples_index
+
+    (cache_dir / "examples_index.json").write_text(
+        json.dumps(build_examples_index(), indent=2)
+    )
+
+
 @mcp.tool()
 def validate(json_config: str) -> str:
     """Validate a JSON configuration for a BayBE object.
@@ -345,6 +397,7 @@ register_builder("types", _build_types)
 register_builder("schema", _build_schema)
 register_builder("docs", _build_docs)
 register_builder("guide", _build_guide)
+register_builder("examples", _build_examples)
 
 
 # ---------------------------------------------------------------------------
