@@ -189,19 +189,34 @@ Performs a stateless Bayesian optimization recommendation. No Campaign or server
 }
 ```
 
+## Config-knowledge tools
+
+These tools help agents build valid configs. All content is derived from the
+installed BayBE version.
+
+| Tool | Description |
+|------|-------------|
+| `list_types` | All serializable BayBE types, grouped by family, each with its schema reference. |
+| `get_schema` | Fields (name, type, default, required), alternative `from_*` constructors, and docstring for a type. Nested objects carry a `$ref` to their own schema. |
+| `get_serialization_guide` | The BayBE serialization guide for the installed version (fetched; links out when offline). |
+| `list_examples` | Index of BayBE example scenarios (topics and files). |
+| `get_example` | Raw content of a single example scenario file. |
+| `get_docs_links` | Version-matched links to the BayBE documentation. |
+
 ## Resources
 
-The server exposes resources that help agents build valid configs. All are
-derived from the installed BayBE version.
+The same content is also exposed as MCP resources, for clients that surface
+resources to the agent (some clients, such as OpenCode, expose only tools —
+use the tools above with those).
 
-| URI | Description |
-|-----|-------------|
-| `baybe://types` | All serializable BayBE types, grouped by family, each with its schema URI. |
-| `baybe://schema/{type}` | Fields (name, type, default, required), alternative `from_*` constructors, and docstring for a type. Nested objects carry a `$ref` to their own schema. |
-| `baybe://guide/serialization` | The BayBE serialization guide for the installed version (fetched; links out when offline). |
-| `baybe://examples` | Index of BayBE example scenarios (topics and files). |
-| `baybe://examples/{topic}/{file}` | Raw content of a single example scenario file. |
-| `baybe://docs` | Version-matched links to the BayBE documentation. |
+| URI | Equivalent tool |
+|-----|-----------------|
+| `baybe://types` | `list_types` |
+| `baybe://schema/{type}` | `get_schema` |
+| `baybe://guide/serialization` | `get_serialization_guide` |
+| `baybe://examples` | `list_examples` |
+| `baybe://examples/{topic}/{file}` | `get_example` |
+| `baybe://docs` | `get_docs_links` |
 
 ## DataFrame Formats
 
