@@ -104,17 +104,16 @@ _CACHE_DIR: str | None = None
 
 
 # ---------------------------------------------------------------------------
-# Resources
+# Payload helpers
+#
+# Each helper is the single source of truth for one piece of resource content,
+# including cache-first behavior. Both the MCP resource and its tool wrapper
+# delegate to the same helper, so the two can never drift apart.
 # ---------------------------------------------------------------------------
 
 
-@mcp.resource("baybe://types")
-def types_resource() -> str:
-    """List all serializable BayBE types, grouped by family.
-
-    Each entry includes the type name and the URI of its schema resource.
-    Served from cache if available, otherwise computed live via introspection.
-    """
+def _types_payload() -> str:
+    """Types tree, from cache if available, else computed live."""
     cached = _read_cached_json("types.json")
     if cached is not None:
         return json.dumps(cached)
@@ -124,20 +123,8 @@ def types_resource() -> str:
     return json.dumps(build_types_tree())
 
 
-def _build_types(cache_dir) -> None:
-    """Cache builder for baybe://types."""
-    from baybe_mcp.introspect import build_types_tree
-
-    (cache_dir / "types.json").write_text(json.dumps(build_types_tree(), indent=2))
-
-
-@mcp.resource("baybe://schema/{type_name}")
-def schema_resource(type_name: str) -> str:
-    """Return the schema for a BayBE type.
-
-    Includes attribute fields, alternative constructors, and docstring. Nested
-    BayBE-object fields carry a ``$ref`` to their own schema resource.
-    """
+def _schema_payload(type_name: str) -> str:
+    """Schema for a type, from cache if available, else computed live."""
     cached = _read_cached_json(f"schema/{type_name}.json")
     if cached is not None:
         return json.dumps(cached)
@@ -145,18 +132,6 @@ def schema_resource(type_name: str) -> str:
     from baybe_mcp.introspect import build_schema
 
     return json.dumps(build_schema(type_name))
-
-
-def _build_schema(cache_dir) -> None:
-    """Cache builder for baybe://schema/{type}."""
-    from baybe_mcp.introspect import build_schema, discover_baybe_classes
-
-    name_to_class = discover_baybe_classes()
-    schema_dir = cache_dir / "schema"
-    schema_dir.mkdir(parents=True, exist_ok=True)
-    for type_name in name_to_class:
-        schema = build_schema(type_name, name_to_class)
-        (schema_dir / f"{type_name}.json").write_text(json.dumps(schema, indent=2))
 
 
 def _docs_links() -> dict:
@@ -179,27 +154,16 @@ def _docs_links() -> dict:
     }
 
 
-@mcp.resource("baybe://docs")
-def docs_resource() -> str:
-    """Return version-matched links to the BayBE documentation."""
+def _docs_payload() -> str:
+    """Documentation links, from cache if available, else computed live."""
     cached = _read_cached_json("docs.json")
     if cached is not None:
         return json.dumps(cached)
     return json.dumps(_docs_links())
 
 
-def _build_docs(cache_dir) -> None:
-    """Cache builder for baybe://docs."""
-    (cache_dir / "docs.json").write_text(json.dumps(_docs_links(), indent=2))
-
-
-@mcp.resource("baybe://guide/serialization")
-def serialization_guide_resource() -> str:
-    """Return the BayBE serialization guide for the installed version.
-
-    Served from cache if available; otherwise fetched live, with a link
-    fallback when offline.
-    """
+def _guide_payload() -> str:
+    """Serialization guide, from cache if available, else fetched live."""
     cached = _read_cached_json("guide_serialization.json")
     if cached is not None:
         return json.dumps(cached)
@@ -209,18 +173,8 @@ def serialization_guide_resource() -> str:
     return json.dumps(build_guide())
 
 
-def _build_guide(cache_dir) -> None:
-    """Cache builder for baybe://guide/serialization."""
-    from baybe_mcp.guide import build_guide
-
-    (cache_dir / "guide_serialization.json").write_text(
-        json.dumps(build_guide(), indent=2)
-    )
-
-
-@mcp.resource("baybe://examples")
-def examples_index_resource() -> str:
-    """Return the index of BayBE example scenarios (topics and files)."""
+def _examples_index_payload() -> str:
+    """Examples index, from cache if available, else computed live."""
     cached = _read_cached_json("examples_index.json")
     if cached is not None:
         return json.dumps(cached)
@@ -230,18 +184,11 @@ def examples_index_resource() -> str:
     return json.dumps(build_examples_index())
 
 
-@mcp.resource("baybe://examples/{topic}/{filename}")
-def example_file_resource(topic: str, filename: str) -> str:
-    """Return the raw content of a single example scenario file.
-
-    Fetched lazily and cached on first access.
-    """
-    from pathlib import Path
-
+def _example_file_payload(topic: str, filename: str) -> str:
+    """Raw content of a single example file; fetched lazily and cached."""
     from baybe_mcp.cache import resolve_cache_dir
 
-    rel = f"examples/{topic}/{filename}"
-    cache_path = resolve_cache_dir(_CACHE_DIR) / rel
+    cache_path = resolve_cache_dir(_CACHE_DIR) / f"examples/{topic}/{filename}"
     if cache_path.is_file():
         return cache_path.read_text()
 
@@ -259,6 +206,94 @@ def example_file_resource(topic: str, filename: str) -> str:
     except OSError:
         pass
     return content
+
+
+# ---------------------------------------------------------------------------
+# Resources (delegate to payload helpers)
+# ---------------------------------------------------------------------------
+
+
+@mcp.resource("baybe://types")
+def types_resource() -> str:
+    """List all serializable BayBE types, grouped by family.
+
+    Each entry includes the type name and the URI of its schema resource.
+    """
+    return _types_payload()
+
+
+def _build_types(cache_dir) -> None:
+    """Cache builder for baybe://types."""
+    from baybe_mcp.introspect import build_types_tree
+
+    (cache_dir / "types.json").write_text(json.dumps(build_types_tree(), indent=2))
+
+
+@mcp.resource("baybe://schema/{type_name}")
+def schema_resource(type_name: str) -> str:
+    """Return the schema for a BayBE type.
+
+    Includes attribute fields, alternative constructors, and docstring. Nested
+    BayBE-object fields carry a ``$ref`` to their own schema resource.
+    """
+    return _schema_payload(type_name)
+
+
+def _build_schema(cache_dir) -> None:
+    """Cache builder for baybe://schema/{type}."""
+    from baybe_mcp.introspect import build_schema, discover_baybe_classes
+
+    name_to_class = discover_baybe_classes()
+    schema_dir = cache_dir / "schema"
+    schema_dir.mkdir(parents=True, exist_ok=True)
+    for type_name in name_to_class:
+        schema = build_schema(type_name, name_to_class)
+        (schema_dir / f"{type_name}.json").write_text(json.dumps(schema, indent=2))
+
+
+@mcp.resource("baybe://docs")
+def docs_resource() -> str:
+    """Return version-matched links to the BayBE documentation."""
+    return _docs_payload()
+
+
+def _build_docs(cache_dir) -> None:
+    """Cache builder for baybe://docs."""
+    (cache_dir / "docs.json").write_text(json.dumps(_docs_links(), indent=2))
+
+
+@mcp.resource("baybe://guide/serialization")
+def serialization_guide_resource() -> str:
+    """Return the BayBE serialization guide for the installed version.
+
+    Served from cache if available; otherwise fetched live, with a link
+    fallback when offline.
+    """
+    return _guide_payload()
+
+
+def _build_guide(cache_dir) -> None:
+    """Cache builder for baybe://guide/serialization."""
+    from baybe_mcp.guide import build_guide
+
+    (cache_dir / "guide_serialization.json").write_text(
+        json.dumps(build_guide(), indent=2)
+    )
+
+
+@mcp.resource("baybe://examples")
+def examples_index_resource() -> str:
+    """Return the index of BayBE example scenarios (topics and files)."""
+    return _examples_index_payload()
+
+
+@mcp.resource("baybe://examples/{topic}/{filename}")
+def example_file_resource(topic: str, filename: str) -> str:
+    """Return the raw content of a single example scenario file.
+
+    Fetched lazily and cached on first access.
+    """
+    return _example_file_payload(topic, filename)
 
 
 def _build_examples(cache_dir) -> None:
