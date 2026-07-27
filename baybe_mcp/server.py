@@ -159,6 +159,40 @@ def _build_schema(cache_dir) -> None:
         (schema_dir / f"{type_name}.json").write_text(json.dumps(schema, indent=2))
 
 
+def _docs_links() -> dict:
+    """Build version-matched links to the BayBE documentation."""
+    from baybe_mcp.version import docs_base_url, get_baybe_version
+
+    version = get_baybe_version()
+    base = docs_base_url(version)
+    return {
+        "baybe_version": version,
+        "links": {
+            "user_guide": f"{base}/userguide/userguide.html",
+            "serialization": f"{base}/userguide/serialization.html",
+            "getting_recommendations": (
+                f"{base}/userguide/getting_recommendations.html"
+            ),
+            "examples": f"{base}/examples/examples.html",
+            "api": f"{base}/_autosummary/baybe.html",
+        },
+    }
+
+
+@mcp.resource("baybe://docs")
+def docs_resource() -> str:
+    """Return version-matched links to the BayBE documentation."""
+    cached = _read_cached_json("docs.json")
+    if cached is not None:
+        return json.dumps(cached)
+    return json.dumps(_docs_links())
+
+
+def _build_docs(cache_dir) -> None:
+    """Cache builder for baybe://docs."""
+    (cache_dir / "docs.json").write_text(json.dumps(_docs_links(), indent=2))
+
+
 @mcp.tool()
 def validate(json_config: str) -> str:
     """Validate a JSON configuration for a BayBE object.
@@ -284,6 +318,7 @@ from baybe_mcp.resources import register_builder  # noqa: E402
 
 register_builder("types", _build_types)
 register_builder("schema", _build_schema)
+register_builder("docs", _build_docs)
 
 
 # ---------------------------------------------------------------------------
