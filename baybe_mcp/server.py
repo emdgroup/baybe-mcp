@@ -202,35 +202,9 @@ def recommend(
 # Entry point
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    import argparse
 
-    parser = argparse.ArgumentParser(description="Run the BayBE MCP server.")
-    parser.add_argument(
-        "--transport",
-        choices=["stdio", "streamable-http"],
-        default="stdio",
-        help="Transport to use (default: stdio).",
-    )
-    parser.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help="Host to bind for HTTP transport (default: 127.0.0.1).",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="Port to bind for HTTP transport (default: 8000).",
-    )
-    parser.add_argument(
-        "--log-level",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default="INFO",
-        help="Logging level (default: INFO).",
-    )
-    args = parser.parse_args()
-
+def _run_server(args) -> None:
+    """Start the MCP server with the given parsed arguments."""
     mcp.settings.log_level = args.log_level
     if args.transport == "streamable-http":
         mcp.settings.host = args.host
@@ -238,3 +212,82 @@ if __name__ == "__main__":
         mcp.run(transport="streamable-http")
     else:
         mcp.run(transport="stdio")
+
+
+def _build(args) -> None:
+    """Build the resource cache as a standalone step."""
+    import logging
+
+    from baybe_mcp.resources import build_resources
+
+    logging.basicConfig(level=args.log_level)
+    build_resources(cache_dir=args.cache_dir)
+
+
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point with ``run`` and ``build`` subcommands.
+
+    A bare invocation (no subcommand) defaults to ``run`` for backwards
+    compatibility.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="BayBE MCP server.")
+    subparsers = parser.add_subparsers(dest="command")
+
+    run_parser = subparsers.add_parser("run", help="Run the MCP server.")
+    run_parser.add_argument(
+        "--transport",
+        choices=["stdio", "streamable-http"],
+        default="stdio",
+        help="Transport to use (default: stdio).",
+    )
+    run_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind for HTTP transport (default: 127.0.0.1).",
+    )
+    run_parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to bind for HTTP transport (default: 8000).",
+    )
+    run_parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Logging level (default: INFO).",
+    )
+
+    build_parser = subparsers.add_parser(
+        "build", help="Build the resource cache and exit."
+    )
+    build_parser.add_argument(
+        "--cache-dir",
+        default=None,
+        help="Cache directory (default: .baybe_mcp_cache in the current dir).",
+    )
+    build_parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Logging level (default: INFO).",
+    )
+
+    args = parser.parse_args(argv)
+
+    if args.command == "build":
+        _build(args)
+        return
+
+    # Default to "run" when no (or the "run") subcommand is given. argparse only
+    # populated run-specific args if the run subparser was used, so fall back to
+    # a fresh parse of the run defaults for the bare-invocation case.
+    if args.command is None:
+        args = run_parser.parse_args([])
+    _run_server(args)
+
+
+if __name__ == "__main__":
+    main()
