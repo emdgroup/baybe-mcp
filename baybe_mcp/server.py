@@ -423,6 +423,76 @@ def recommend(
 
 
 # ---------------------------------------------------------------------------
+# Resource tools
+#
+# The same content exposed as MCP resources is also exposed as tools, because
+# some MCP clients surface only tools (not resources) to the agent. Each tool
+# delegates to the same payload helper as its resource.
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def list_types() -> str:
+    """List all serializable BayBE types, grouped by family.
+
+    Use this to discover which "type" values are valid. Each entry includes the
+    type name and the URI of its schema (retrievable with get_schema).
+    """
+    return _types_payload()
+
+
+@mcp.tool()
+def get_schema(type_name: str) -> str:
+    """Get the schema for a BayBE type to learn how to build its JSON config.
+
+    Returns the attribute fields (name, type, default, required), alternative
+    "from_*" constructors, and docstring. Nested BayBE objects are shown as a
+    "$ref" pointing to that type's schema. Call this before writing a config.
+
+    Args:
+        type_name: The concrete BayBE type name (e.g. "NumericalDiscreteParameter").
+    """
+    return _schema_payload(type_name)
+
+
+@mcp.tool()
+def get_serialization_guide() -> str:
+    """Get the BayBE serialization guide for the installed version.
+
+    Explains conventions that schemas alone do not convey (alternative
+    constructors, string shortcuts, abbreviations, dataframe formats).
+    """
+    return _guide_payload()
+
+
+@mcp.tool()
+def list_examples() -> str:
+    """List BayBE example scenarios, grouped by topic.
+
+    Each file can be fetched with get_example to see a comprehensive, working
+    modelling scenario.
+    """
+    return _examples_index_payload()
+
+
+@mcp.tool()
+def get_example(topic: str, filename: str) -> str:
+    """Get the raw content of a single BayBE example scenario file.
+
+    Args:
+        topic: The example topic folder (e.g. "Serialization").
+        filename: The example file name (e.g. "validate_config.py").
+    """
+    return _example_file_payload(topic, filename)
+
+
+@mcp.tool()
+def get_docs_links() -> str:
+    """Get version-matched links to the BayBE documentation."""
+    return _docs_payload()
+
+
+# ---------------------------------------------------------------------------
 # Builder registration
 # ---------------------------------------------------------------------------
 
