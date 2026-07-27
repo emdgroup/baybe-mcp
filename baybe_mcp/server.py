@@ -81,6 +81,56 @@ def _serialize_dataframe(df: pd.DataFrame, output_format: str) -> str:
 mcp = FastMCP("baybe-mcp")
 
 
+# ---------------------------------------------------------------------------
+# Resource cache access
+# ---------------------------------------------------------------------------
+
+
+def _read_cached_json(filename: str):
+    """Return parsed JSON from the active cache dir, or None if unavailable."""
+    from baybe_mcp.cache import resolve_cache_dir
+
+    path = resolve_cache_dir(_CACHE_DIR) / filename
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+# Cache dir used by resources at serve time; set during startup.
+_CACHE_DIR: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+
+
+@mcp.resource("baybe://types")
+def types_resource() -> str:
+    """List all serializable BayBE types, grouped by family.
+
+    Each entry includes the type name and the URI of its schema resource.
+    Served from cache if available, otherwise computed live via introspection.
+    """
+    cached = _read_cached_json("types.json")
+    if cached is not None:
+        return json.dumps(cached)
+
+    from baybe_mcp.introspect import build_types_tree
+
+    return json.dumps(build_types_tree())
+
+
+def _build_types(cache_dir) -> None:
+    """Cache builder for baybe://types."""
+    from baybe_mcp.introspect import build_types_tree
+
+    (cache_dir / "types.json").write_text(json.dumps(build_types_tree(), indent=2))
+
+
 @mcp.tool()
 def validate(json_config: str) -> str:
     """Validate a JSON configuration for a BayBE object.
@@ -199,6 +249,15 @@ def recommend(
 
 
 # ---------------------------------------------------------------------------
+# Builder registration
+# ---------------------------------------------------------------------------
+
+from baybe_mcp.resources import register_builder  # noqa: E402
+
+register_builder("types", _build_types)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -221,6 +280,9 @@ def _ensure_resources(args) -> None:
 
     logger = logging.getLogger(__name__)
     cache_dir = resolve_cache_dir(args.cache_dir)
+
+    global _CACHE_DIR
+    _CACHE_DIR = args.cache_dir
 
     if args.rebuild_resources:
         build_resources(cache_dir=cache_dir)
