@@ -24,17 +24,43 @@ uv pip list                                                # all installed packa
 
 `uv.lock` is the source of truth for the exact resolved versions of all dependencies.
 
+## Building resources
+
+The server exposes resources (types, schemas, a serialization guide, examples)
+that are derived from the installed BayBE version. They are stored in a cache
+directory so the server starts fast and can run offline.
+
+```bash
+uv run python -m baybe_mcp.server build
+```
+
+This writes `.baybe_mcp_cache/` in the current directory. Building is optional:
+the server auto-builds on first start when the cache is missing/stale and the
+network is reachable. Use `--cache-dir` to change the location.
+
+Because everything is derived from the installed BayBE version, you only ever
+need to choose the BayBE version. The cache is version-guarded, so it can be
+built on one machine and copied to another (e.g. one without internet):
+
+```bash
+# machine with internet:
+uv run python -m baybe_mcp.server build --cache-dir /path/to/cache
+# copy the cache folder to the offline machine, then:
+uv run python -m baybe_mcp.server run --use-cache --cache-dir /path/to/cache
+```
+
 ## Running the server
 
-The server supports two transports. Run `--help` to see all options
-(`--transport`, `--host`, `--port`, `--log-level`).
+The server supports two transports. Run `run --help` to see all options
+(`--transport`, `--host`, `--port`, `--log-level`, `--cache-dir`,
+`--rebuild-resources`, `--use-cache`).
 
 ### stdio (local)
 
 The MCP client spawns the server as a subprocess and talks over stdin/stdout:
 
 ```bash
-uv run python -m baybe_mcp.server
+uv run python -m baybe_mcp.server run
 ```
 
 ### HTTP (remote)
@@ -43,7 +69,7 @@ The server runs as a persistent process and clients connect by URL. This is the
 mode used for hosting the server remotely:
 
 ```bash
-uv run python -m baybe_mcp.server --transport streamable-http
+uv run python -m baybe_mcp.server run --transport streamable-http
 ```
 
 This serves the MCP endpoint at `http://127.0.0.1:8000/mcp`. Use `--host` /
@@ -70,7 +96,7 @@ or a project-level `opencode.json`).
   "mcp": {
     "baybe": {
       "type": "local",
-      "command": ["uv", "run", "--directory", "/absolute/path/to/baybe-mcp", "python", "-m", "baybe_mcp.server"],
+      "command": ["uv", "run", "--directory", "/absolute/path/to/baybe-mcp", "python", "-m", "baybe_mcp.server", "run"],
       "enabled": true,
       "timeout": 30000
     }
@@ -162,6 +188,20 @@ Performs a stateless Bayesian optimization recommendation. No Campaign or server
   }
 }
 ```
+
+## Resources
+
+The server exposes resources that help agents build valid configs. All are
+derived from the installed BayBE version.
+
+| URI | Description |
+|-----|-------------|
+| `baybe://types` | All serializable BayBE types, grouped by family, each with its schema URI. |
+| `baybe://schema/{type}` | Fields (name, type, default, required), alternative `from_*` constructors, and docstring for a type. Nested objects carry a `$ref` to their own schema. |
+| `baybe://guide/serialization` | The BayBE serialization guide for the installed version (fetched; links out when offline). |
+| `baybe://examples` | Index of BayBE example scenarios (topics and files). |
+| `baybe://examples/{topic}/{file}` | Raw content of a single example scenario file. |
+| `baybe://docs` | Version-matched links to the BayBE documentation. |
 
 ## DataFrame Formats
 
