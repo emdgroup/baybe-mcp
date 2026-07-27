@@ -336,13 +336,18 @@ def _build_examples(cache_dir) -> None:
 def validate(json_config: str | dict) -> str:
     """Validate a configuration for a BayBE object.
 
-    Accepts either a JSON object or a JSON string representing a BayBE object.
-    The config must contain a "type" field identifying the concrete class
-    (e.g. "SearchSpace", "CategoricalParameter", "SingleTargetObjective").
+    Validate every config (search space, objective, recommender) with this tool
+    BEFORE passing it to `recommend`. It catches errors early and cheaply and
+    returns an actionable message you can use to fix the config.
+
+    Accepts either a JSON object or a JSON string. The config must contain a
+    "type" field identifying the concrete class (e.g. "SearchSpace",
+    "CategoricalParameter", "SingleTargetObjective"). Use `get_schema` to learn
+    a type's fields before building the config.
 
     Returns a JSON object with:
     - "valid": boolean indicating if the config is valid
-    - "message": success confirmation or error details
+    - "message": success confirmation or error details to guide a fix
     """
     try:
         data = _as_obj(json_config)
@@ -390,6 +395,11 @@ def recommend(
 
     Performs a single recommendation step without maintaining any server-side
     state (no Campaign object). All context must be passed explicitly.
+
+    Before calling this, build each config using `get_schema` (and
+    `get_serialization_guide` / `get_example` for patterns), then confirm each
+    with `validate`. If this returns an {"error": ...}, re-check the offending
+    config with `validate` or `get_schema` and retry.
 
     Config and measurement arguments accept either a JSON object/array or a
     JSON string; both forms are handled transparently.
@@ -468,8 +478,9 @@ def recommend(
 def list_types() -> str:
     """List all serializable BayBE types, grouped by family.
 
-    Use this to discover which "type" values are valid. Each entry includes the
-    type name and the URI of its schema (retrievable with get_schema).
+    Step 1 of building a config: discover which "type" values are valid. Each
+    entry includes the type name and the URI of its schema. Next, call
+    `get_schema` for a type to learn its fields.
     """
     return _types_payload()
 
@@ -480,7 +491,12 @@ def get_schema(type_name: str) -> str:
 
     Returns the attribute fields (name, type, default, required), alternative
     "from_*" constructors, and docstring. Nested BayBE objects are shown as a
-    "$ref" pointing to that type's schema. Call this before writing a config.
+    "$ref" pointing to that type's schema (fetch it with `get_schema`).
+
+    Workflow: discover types with `list_types`, read the schema here, build the
+    config, then confirm it with `validate` before calling `recommend`. For
+    conventions the schema does not convey (constructor forms, string
+    shortcuts, abbreviations), see `get_serialization_guide`.
 
     Args:
         type_name: The concrete BayBE type name (e.g. "NumericalDiscreteParameter").
@@ -492,8 +508,9 @@ def get_schema(type_name: str) -> str:
 def get_serialization_guide() -> str:
     """Get the BayBE serialization guide for the installed version.
 
-    Explains conventions that schemas alone do not convey (alternative
-    constructors, string shortcuts, abbreviations, dataframe formats).
+    Consult this when a schema alone is not enough: it explains conventions such
+    as alternative constructors, string shortcuts, abbreviations, and dataframe
+    formats. Complements `get_schema`.
     """
     return _guide_payload()
 
@@ -502,8 +519,9 @@ def get_serialization_guide() -> str:
 def list_examples() -> str:
     """List BayBE example scenarios, grouped by topic.
 
-    Each file can be fetched with get_example to see a comprehensive, working
-    modelling scenario.
+    Use these for complete, working modelling scenarios (assembling a whole
+    search space + objective + recommender), complementing the per-type
+    `get_schema`. Fetch a specific file with `get_example`.
     """
     return _examples_index_payload()
 
@@ -511,6 +529,9 @@ def list_examples() -> str:
 @mcp.tool()
 def get_example(topic: str, filename: str) -> str:
     """Get the raw content of a single BayBE example scenario file.
+
+    Returns a comprehensive, working modelling scenario. Discover available
+    files with `list_examples` first.
 
     Args:
         topic: The example topic folder (e.g. "Serialization").
@@ -521,7 +542,11 @@ def get_example(topic: str, filename: str) -> str:
 
 @mcp.tool()
 def get_docs_links() -> str:
-    """Get version-matched links to the BayBE documentation."""
+    """Get version-matched links to the BayBE documentation.
+
+    A fallback for deeper reference beyond what `get_schema`,
+    `get_serialization_guide`, and the example tools provide.
+    """
     return _docs_payload()
 
 
