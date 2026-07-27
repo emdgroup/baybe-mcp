@@ -129,6 +129,11 @@ built-in tools.
 
 ## Tools
 
+**Recommended workflow:** discover types with `list_types`, read a type's
+`get_schema` (consult `get_serialization_guide` and `list_examples` /
+`get_example` for patterns), build the config, confirm it with `validate`, then
+call `recommend`.
+
 ### `validate`
 
 Validates a JSON configuration for any BayBE object. Useful for agents to check their configs before passing them to `recommend`.
