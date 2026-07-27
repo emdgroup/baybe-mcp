@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Config-knowledge tools (`list_types`, `get_schema`, `get_serialization_guide`,
+  `list_examples`, `get_example`, `get_docs_links`) that expose the same content
+  as the resources, for MCP clients that surface only tools (e.g. OpenCode).
+  Tools and resources share the same payload helpers, so they cannot drift.
 - MCP resources exposing BayBE config knowledge, all derived from the installed
   BayBE version:
   - `baybe://types`: all serializable types grouped by family, each with its
