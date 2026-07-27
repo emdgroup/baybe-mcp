@@ -5,14 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-### Fixed
-- `validate` and `recommend` now accept configs and measurements as native JSON
-  objects/arrays in addition to JSON strings, so MCP clients that
-  auto-deserialize valid-JSON arguments (e.g. OpenCode) work correctly. Search
-  space and objective are structured via the converter, which also fixes
-  `from_product` search spaces that were previously rejected.
-
+## [0.2.0] - 2026-07-27
 ### Added
 - Config-knowledge tools (`list_types`, `get_schema`, `get_serialization_guide`,
   `list_examples`, `get_example`, `get_docs_links`) that expose the same content
@@ -36,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Standalone `build` command and cache-aware `run` startup that share a single
   `build_resources` routine; `run` flags `--cache-dir`, `--rebuild-resources`,
   and `--use-cache`
+
+### Fixed
+- `validate` and `recommend` now accept configs and measurements as native JSON
+  objects/arrays in addition to JSON strings, so MCP clients that
+  auto-deserialize valid-JSON arguments (e.g. OpenCode) work correctly. Search
+  space and objective are structured via the converter, which also fixes
+  `from_product` search spaces that were previously rejected.
 
 ## [0.1.0]
 ### Added
