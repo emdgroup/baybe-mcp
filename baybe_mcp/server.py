@@ -40,15 +40,42 @@ NAME_TO_CLASS = _discover_baybe_classes()
 # ---------------------------------------------------------------------------
 
 
-def _deserialize_dataframe(raw: str) -> pd.DataFrame:
-    """Deserialize a DataFrame from JSON.
+def _as_obj(value: Any) -> Any:
+    """Normalize a JSON argument to a native Python object.
 
-    Supports three formats:
+    Some MCP clients (e.g. OpenCode) auto-deserialize arguments that are valid
+    JSON, so a value may arrive either as a JSON string or as an already-parsed
+    dict/list. This returns the parsed object in both cases.
+
+    Already-parsed inputs are deep-copied so that objects owned by the tool
+    framework are never passed into BayBE's converter, which would otherwise
+    retain references and corrupt later structuring calls.
+    """
+    if isinstance(value, str):
+        return json.loads(value)
+    import copy
+
+    return copy.deepcopy(value)
+
+
+def _deserialize_dataframe(raw: Any) -> pd.DataFrame:
+    """Deserialize a DataFrame from JSON input.
+
+    Accepts either a JSON string or an already-parsed object (see ``_as_obj``),
+    in three formats:
     - base64: a base64-encoded pickle string (BayBE native)
     - constructor dict: {"constructor": "from_records", "data": [...]}
     - records: a plain JSON array [{"col": val}, ...]
     """
-    parsed: Any = json.loads(raw)
+    # A raw base64 string is itself the payload; only parse actual JSON strings.
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if stripped[:1] in ("[", "{", '"'):
+            parsed: Any = json.loads(raw)
+        else:
+            parsed = raw  # base64 payload
+    else:
+        parsed = raw
 
     # base64 string or constructor dict → let BayBE's converter handle it
     if isinstance(parsed, str) or (
@@ -306,21 +333,24 @@ def _build_examples(cache_dir) -> None:
 
 
 @mcp.tool()
-def validate(json_config: str) -> str:
-    """Validate a JSON configuration for a BayBE object.
+def validate(json_config: str | dict) -> str:
+    """Validate a configuration for a BayBE object.
 
-    Takes a JSON string representing a BayBE object. The JSON must contain a
-    "type" field identifying the concrete class (e.g. "SearchSpace",
-    "CategoricalParameter", "SingleTargetObjective").
+    Accepts either a JSON object or a JSON string representing a BayBE object.
+    The config must contain a "type" field identifying the concrete class
+    (e.g. "SearchSpace", "CategoricalParameter", "SingleTargetObjective").
 
     Returns a JSON object with:
     - "valid": boolean indicating if the config is valid
     - "message": success confirmation or error details
     """
     try:
-        data = json.loads(json_config)
+        data = _as_obj(json_config)
     except json.JSONDecodeError as exc:
         return json.dumps({"valid": False, "message": f"Invalid JSON: {exc}"})
+
+    if not isinstance(data, dict):
+        return json.dumps({"valid": False, "message": "Config must be a JSON object."})
 
     type_name = data.get("type")
     if type_name is None:
@@ -349,11 +379,11 @@ def validate(json_config: str) -> str:
 @mcp.tool()
 def recommend(
     batch_size: int,
-    searchspace_json: str,
-    objective_json: str,
-    measurements_json: str | None = None,
-    recommender_json: str | None = None,
-    pending_experiments_json: str | None = None,
+    searchspace_json: str | dict,
+    objective_json: str | dict,
+    measurements_json: str | list | dict | None = None,
+    recommender_json: str | dict | None = None,
+    pending_experiments_json: str | list | dict | None = None,
     output_format: str = "records",
 ) -> str:
     """Get stateless Bayesian optimization recommendations.
@@ -361,17 +391,20 @@ def recommend(
     Performs a single recommendation step without maintaining any server-side
     state (no Campaign object). All context must be passed explicitly.
 
+    Config and measurement arguments accept either a JSON object/array or a
+    JSON string; both forms are handled transparently.
+
     Args:
         batch_size: Number of experiments to recommend.
-        searchspace_json: JSON-serialized BayBE SearchSpace.
-        objective_json: JSON-serialized BayBE Objective.
-        measurements_json: Optional JSON-serialized DataFrame of past
-            measurements. Supports three formats: base64 (BayBE native),
-            constructor dict, or records ([{"col": val}, ...]).
-        recommender_json: Optional JSON-serialized recommender config.
-            Defaults to TwoPhaseMetaRecommender.
-        pending_experiments_json: Optional JSON-serialized DataFrame of
-            pending experiments (same formats as measurements).
+        searchspace_json: BayBE SearchSpace as a JSON object or string.
+        objective_json: BayBE Objective as a JSON object or string.
+        measurements_json: Optional past measurements as a DataFrame. Accepts
+            records (a JSON array [{"col": val}, ...]), a constructor dict, or a
+            base64 string (BayBE native).
+        recommender_json: Optional recommender config as a JSON object or
+            string. Defaults to TwoPhaseMetaRecommender.
+        pending_experiments_json: Optional pending experiments as a DataFrame
+            (same formats as measurements).
         output_format: Output format for recommendations: "records"
             (default, list of dicts) or "base64" (BayBE native).
 
@@ -383,8 +416,8 @@ def recommend(
     from baybe.searchspace.core import SearchSpace
 
     try:
-        searchspace = SearchSpace.from_json(searchspace_json)
-        objective = Objective.from_json(objective_json)
+        searchspace = converter.structure(_as_obj(searchspace_json), SearchSpace)
+        objective = converter.structure(_as_obj(objective_json), Objective)
 
         measurements = None
         if measurements_json is not None:
@@ -395,7 +428,7 @@ def recommend(
             pending_experiments = _deserialize_dataframe(pending_experiments_json)
 
         if recommender_json is not None:
-            rec_data = json.loads(recommender_json)
+            rec_data = _as_obj(recommender_json)
             type_name = rec_data.get("type")
             if type_name is None:
                 return json.dumps(
