@@ -131,6 +131,34 @@ def _build_types(cache_dir) -> None:
     (cache_dir / "types.json").write_text(json.dumps(build_types_tree(), indent=2))
 
 
+@mcp.resource("baybe://schema/{type_name}")
+def schema_resource(type_name: str) -> str:
+    """Return the schema for a BayBE type.
+
+    Includes attribute fields, alternative constructors, and docstring. Nested
+    BayBE-object fields carry a ``$ref`` to their own schema resource.
+    """
+    cached = _read_cached_json(f"schema/{type_name}.json")
+    if cached is not None:
+        return json.dumps(cached)
+
+    from baybe_mcp.introspect import build_schema
+
+    return json.dumps(build_schema(type_name))
+
+
+def _build_schema(cache_dir) -> None:
+    """Cache builder for baybe://schema/{type}."""
+    from baybe_mcp.introspect import build_schema, discover_baybe_classes
+
+    name_to_class = discover_baybe_classes()
+    schema_dir = cache_dir / "schema"
+    schema_dir.mkdir(parents=True, exist_ok=True)
+    for type_name in name_to_class:
+        schema = build_schema(type_name, name_to_class)
+        (schema_dir / f"{type_name}.json").write_text(json.dumps(schema, indent=2))
+
+
 @mcp.tool()
 def validate(json_config: str) -> str:
     """Validate a JSON configuration for a BayBE object.
@@ -255,6 +283,7 @@ def recommend(
 from baybe_mcp.resources import register_builder  # noqa: E402
 
 register_builder("types", _build_types)
+register_builder("schema", _build_schema)
 
 
 # ---------------------------------------------------------------------------
