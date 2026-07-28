@@ -426,3 +426,99 @@ def test_prepare_surrogate_passthrough_already_replicated():
     # Same object: the guard must not replicate a surrogate that already handles
     # multiple targets (a CompositeSurrogate has no `replicate` method).
     assert prepared is replicated
+
+
+# ---------------------------------------------------------------------------
+# parameter_importance tool tests
+# ---------------------------------------------------------------------------
+
+from baybe_mcp.server import parameter_importance  # noqa: E402
+
+# A few extra points make the SHAP explanation well-defined.
+IMPORTANCE_MEASUREMENTS_JSON = json.dumps(
+    [
+        {"x1": 1.0, "x2": 10.0, "y": 0.5},
+        {"x1": 3.0, "x2": 20.0, "y": 0.8},
+        {"x1": 5.0, "x2": 30.0, "y": 0.2},
+        {"x1": 2.0, "x2": 10.0, "y": 0.4},
+        {"x1": 4.0, "x2": 30.0, "y": 0.9},
+    ]
+)
+IMPORTANCE_MULTI_MEASUREMENTS_JSON = json.dumps(
+    [
+        {"x1": 1.0, "x2": 10.0, "y1": 0.5, "y2": 0.4},
+        {"x1": 3.0, "x2": 20.0, "y1": 0.8, "y2": 0.6},
+        {"x1": 5.0, "x2": 30.0, "y1": 0.2, "y2": 0.9},
+        {"x1": 2.0, "x2": 10.0, "y1": 0.4, "y2": 0.5},
+        {"x1": 4.0, "x2": 30.0, "y1": 0.9, "y2": 0.1},
+    ]
+)
+
+
+def test_parameter_importance_single_target():
+    """One importance value per parameter for a single-target objective."""
+    pytest.importorskip("shap")
+    result_str = parameter_importance(
+        searchspace_json=SEARCHSPACE_JSON,
+        objective_json=OBJECTIVE_JSON,
+        measurements_json=IMPORTANCE_MEASUREMENTS_JSON,
+    )
+    result = json.loads(result_str)
+    assert isinstance(result, list)
+    assert {r["parameter"] for r in result} == {"x1", "x2"}
+    assert all(set(r) == {"parameter", "y_importance"} for r in result)
+
+
+def test_parameter_importance_multi_target():
+    """One importance column per target for a multi-target objective."""
+    pytest.importorskip("shap")
+    result_str = parameter_importance(
+        searchspace_json=SEARCHSPACE_JSON,
+        objective_json=_pareto_objective_json(),
+        measurements_json=IMPORTANCE_MULTI_MEASUREMENTS_JSON,
+    )
+    result = json.loads(result_str)
+    assert isinstance(result, list)
+    assert {r["parameter"] for r in result} == {"x1", "x2"}
+    assert all(
+        set(r) == {"parameter", "y1_importance", "y2_importance"} for r in result
+    )
+
+
+def test_parameter_importance_use_comp_rep():
+    """Computational representation is explained when requested."""
+    pytest.importorskip("shap")
+    result_str = parameter_importance(
+        searchspace_json=SEARCHSPACE_JSON,
+        objective_json=OBJECTIVE_JSON,
+        measurements_json=IMPORTANCE_MEASUREMENTS_JSON,
+        use_comp_rep=True,
+    )
+    result = json.loads(result_str)
+    assert isinstance(result, list)
+    assert len(result) >= 1
+    assert all("parameter" in r and "y_importance" in r for r in result)
+
+
+def test_parameter_importance_requires_measurements():
+    """Empty measurements should return an error."""
+    result_str = parameter_importance(
+        searchspace_json=SEARCHSPACE_JSON,
+        objective_json=OBJECTIVE_JSON,
+        measurements_json="[]",
+    )
+    result = json.loads(result_str)
+    assert "error" in result
+
+
+def test_parameter_importance_unknown_surrogate():
+    """An unknown surrogate type should return an error."""
+    result_str = parameter_importance(
+        searchspace_json=SEARCHSPACE_JSON,
+        objective_json=OBJECTIVE_JSON,
+        measurements_json=IMPORTANCE_MEASUREMENTS_JSON,
+        surrogate_json=json.dumps({"type": "NonExistentSurrogate"}),
+    )
+    result = json.loads(result_str)
+    assert "error" in result
+    assert "Unknown surrogate type" in result["error"]
