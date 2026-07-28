@@ -48,13 +48,15 @@ Add to `~/.config/opencode/opencode.json` (or a project-level `opencode.json`):
       "type": "local",
       "command": ["uv", "run", "--directory", "/absolute/path/to/baybe-mcp", "python", "-m", "baybe_mcp.server", "run"],
       "enabled": true,
-      "timeout": 30000
+      "timeout": 600000
     }
   }
 }
 ```
 
-The raised timeout accounts for the slow initial import of BayBE and PyTorch.
+The timeout is set to 10 minutes. It covers the slow initial import of BayBE and
+PyTorch, but recommendation calls themselves can take much longer, so you may
+need to increase this value significantly.
 
 ### Claude Desktop
 
@@ -70,6 +72,20 @@ Add to `claude_desktop_config.json`:
   }
 }
 ```
+
+### Claude Code
+
+Register the server with the CLI (use `--scope user` to make it available across
+all projects instead of just the current one):
+
+```bash
+claude mcp add baybe -- uv run --directory /absolute/path/to/baybe-mcp python -m baybe_mcp.server run
+```
+
+Recommendation calls can take a long time. Raise Claude Code's per-tool timeout
+via the `MCP_TOOL_TIMEOUT` environment variable (milliseconds), e.g.
+`MCP_TOOL_TIMEOUT=600000 claude` for 10 minutes, and increase it significantly
+if needed.
 
 ## Remote Install
 
@@ -94,6 +110,11 @@ Point clients at the URL:
 ```jsonc
 // Claude Desktop
 { "mcpServers": { "baybe": { "url": "http://127.0.0.1:8000/mcp" } } }
+```
+
+```bash
+# Claude Code
+claude mcp add --transport http baybe http://127.0.0.1:8000/mcp
 ```
 
 ## Resources, Caching, Custom Recipes
