@@ -10,8 +10,13 @@ from typing import Any
 import attrs
 import baybe
 import pandas as pd
+from baybe.insights.shap import NON_SHAP_EXPLAINERS, SHAP_EXPLAINERS
 from baybe.serialization.core import converter
 from mcp.server.fastmcp import FastMCP
+
+# Valid SHAP explainer names, derived from the loaded BayBE version so the tool
+# description always matches what is actually available at runtime.
+_ALL_EXPLAINERS = sorted(SHAP_EXPLAINERS | NON_SHAP_EXPLAINERS)
 
 # ---------------------------------------------------------------------------
 # Class discovery: build a map of all concrete attrs classes in baybe
@@ -581,6 +586,130 @@ def predict(
         surrogate = _prepare_surrogate(surrogate, objective)
         surrogate.fit(searchspace, objective, measurements)
         result = surrogate.posterior_stats(candidates, stats=requested_stats)
+
+        return _serialize_dataframe(result, output_format)
+
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
+_PARAMETER_IMPORTANCE_DESCRIPTION = f"""\
+Get SHAP-based parameter importance for each target.
+
+Fits a surrogate on the provided measurements, then uses SHAP to attribute the \
+model output to each search space parameter. Importance is the mean absolute \
+SHAP value of a parameter over the measurements. Stateless: no Campaign or \
+server-side state is kept.
+
+Before calling this, build each config using `get_schema` (and \
+`get_serialization_guide` / `get_example` for patterns), then confirm each with \
+`validate`. If this returns an {{"error": ...}}, re-check the offending config \
+with `validate` or `get_schema` and retry.
+
+Config and measurement arguments accept either a JSON object/array or a JSON \
+string; both forms are handled transparently.
+
+Valid explainer values: {", ".join(_ALL_EXPLAINERS)}. Only KernelExplainer \
+supports categorical parameters in the experimental representation \
+(use_comp_rep=False). All other explainers require use_comp_rep=True when the \
+search space contains categorical parameters; with no categorical parameters, \
+any explainer works with use_comp_rep=False.
+
+Args:
+    searchspace_json: BayBE SearchSpace as a JSON object or string.
+    objective_json: BayBE Objective as a JSON object or string.
+    measurements_json: Past measurements used to train the surrogate and as
+        SHAP background data, as a DataFrame. Accepts records (a JSON array
+        [{{"col": val}}, ...]), a constructor dict, or a base64 string (BayBE
+        native). Required: the surrogate cannot be trained without data.
+    surrogate_json: Optional surrogate config as a JSON object or string.
+        Defaults to GaussianProcessSurrogate. For multi-target objectives
+        (a ParetoObjective, or a DesirabilityObjective without
+        pre-transformation), a single-output surrogate is automatically
+        replicated per target.
+    explainer: SHAP explainer class name (default "KernelExplainer"). See the
+        valid values listed above.
+    use_comp_rep: Explain the computational representation instead of the
+        experimental one. Defaults to False.
+    output_format: Output format: "records" (default, list of dicts) or
+        "base64" (BayBE native).
+
+Returns:
+    JSON string with a DataFrame of importances, one row per parameter: a
+    "parameter" column plus one "<target>_importance" column per target. Or
+    error details.
+"""
+
+
+@mcp.tool(description=_PARAMETER_IMPORTANCE_DESCRIPTION)
+def parameter_importance(
+    searchspace_json: str | dict,
+    objective_json: str | dict,
+    measurements_json: str | list | dict,
+    surrogate_json: str | dict | None = None,
+    explainer: str = "KernelExplainer",
+    use_comp_rep: bool = False,
+    output_format: str = "records",
+) -> str:
+    """Get SHAP-based parameter importance for each target.
+
+    The full tool description, including the valid explainer names for the
+    installed BayBE version, is built dynamically in
+    ``_PARAMETER_IMPORTANCE_DESCRIPTION`` and surfaced to MCP clients.
+    """
+    import numpy as np
+    from baybe.insights.shap import SHAPInsight
+    from baybe.objectives.base import Objective
+    from baybe.searchspace.core import SearchSpace
+    from baybe.surrogates.gaussian_process import GaussianProcessSurrogate
+
+    try:
+        searchspace = converter.structure(_as_obj(searchspace_json), SearchSpace)
+        objective = converter.structure(_as_obj(objective_json), Objective)
+
+        measurements = _deserialize_dataframe(measurements_json)
+        if measurements.empty:
+            return json.dumps(
+                {"error": "measurements are required to train the surrogate."}
+            )
+
+        if surrogate_json is not None:
+            surr_data = _as_obj(surrogate_json)
+            type_name = surr_data.get("type")
+            if type_name is None:
+                return json.dumps(
+                    {"error": 'Missing "type" field in surrogate config.'}
+                )
+            cls = NAME_TO_CLASS.get(type_name)
+            if cls is None:
+                return json.dumps({"error": f"Unknown surrogate type: '{type_name}'"})
+            surrogate = converter.structure(surr_data, cls)
+        else:
+            surrogate = GaussianProcessSurrogate()
+
+        surrogate = _prepare_surrogate(surrogate, objective)
+        surrogate.fit(searchspace, objective, measurements)
+
+        background = measurements[[p.name for p in searchspace.parameters]]
+        if use_comp_rep:
+            background = searchspace.transform(background)
+
+        insight = SHAPInsight.from_surrogate(
+            surrogate, background, explainer_cls=explainer, use_comp_rep=use_comp_rep
+        )
+        explanations = insight.explain()
+        target_names = objective._modeled_quantity_names
+
+        result = None
+        for name, explanation in zip(target_names, explanations):
+            importance = np.abs(explanation.values).mean(axis=0)
+            df = pd.DataFrame(
+                {
+                    "parameter": list(explanation.feature_names),
+                    f"{name}_importance": importance,
+                }
+            )
+            result = df if result is None else result.merge(df, on="parameter")
 
         return _serialize_dataframe(result, output_format)
 
