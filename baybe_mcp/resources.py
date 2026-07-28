@@ -1,6 +1,6 @@
 """Resource build orchestration.
 
-Each resource (types, schema, docs, concepts, examples) registers a builder that
+Each resource (types, schema, docs, concepts, recipes) registers a builder that
 writes its artifacts into the cache directory. ``build_resources`` runs all
 registered builders and writes the manifest. The same routine is used both by
 the standalone ``build`` command and by the server at startup, so there is a

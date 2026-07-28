@@ -1,7 +1,9 @@
-"""Example scenarios sourced from BayBE's examples/ folder at the version tag.
+"""Recipes: complete worked scenarios sourced from BayBE's examples/ folder.
 
-The index of topics/files is discovered via the GitHub contents API; individual
-example files are fetched as raw jupytext ``.py`` content on demand.
+The index of topics/files is discovered via the GitHub contents API at the
+version tag; individual recipe files are fetched as raw jupytext ``.py``
+content on demand. User-provided recipes (local ``.md`` files) are merged in by
+the server at build time.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ logger = logging.getLogger(__name__)
 _API = "https://api.github.com/repos/emdgroup/baybe/contents"
 _RAW = "https://raw.githubusercontent.com/emdgroup/baybe"
 
-# Skipped because it is meta guidance, not an example scenario.
+# Skipped because it is meta guidance, not a recipe scenario.
 _SKIP_FILES = {"AGENTS.md"}
 
 
@@ -33,11 +35,12 @@ def _contents(version: str, path: str) -> list | None:
         return None
 
 
-def build_examples_index() -> dict:
-    """Build the index of example topics and their scenario files.
+def build_recipes_index() -> dict:
+    """Build the index of recipe topics and their scenario files.
 
     Returns a dict with the version and, per topic, the list of files with
-    their resource URIs. Falls back to a link when the listing is unavailable.
+    their resource URIs and source. Falls back to a link when the listing is
+    unavailable.
     """
     version = get_baybe_version()
     if version is None:
@@ -48,7 +51,7 @@ def build_examples_index() -> dict:
         return {
             "baybe_version": version,
             "link": f"https://github.com/emdgroup/baybe/tree/{version}/examples",
-            "note": "Example index unavailable offline; see the linked folder.",
+            "note": "Recipe index unavailable offline; see the linked folder.",
             "topics": {},
         }
 
@@ -69,7 +72,8 @@ def build_examples_index() -> dict:
             scenario_files.append(
                 {
                     "file": f["name"],
-                    "resource": f"baybe://examples/{topic}/{f['name']}",
+                    "resource": f"baybe://recipes/{topic}/{f['name']}",
+                    "source": "docs",
                 }
             )
         if scenario_files:
@@ -78,8 +82,8 @@ def build_examples_index() -> dict:
     return {"baybe_version": version, "topics": topics}
 
 
-def fetch_example(topic: str, filename: str) -> str | None:
-    """Fetch the raw content of a single example file for the installed version."""
+def fetch_recipe(topic: str, filename: str) -> str | None:
+    """Fetch the raw content of a single recipe file for the installed version."""
     version = get_baybe_version()
     if version is None:
         return None

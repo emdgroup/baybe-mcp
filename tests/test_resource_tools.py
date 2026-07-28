@@ -28,11 +28,11 @@ class TestToolResourceParity:
         monkeypatch.setattr(concepts, "fetch_text", lambda *a, **k: None)
         assert server.list_concepts() == server.concepts_index_resource()
 
-    def test_list_examples_matches_resource(self, monkeypatch):
-        import baybe_mcp.examples as examples
+    def test_list_recipes_matches_resource(self, monkeypatch):
+        import baybe_mcp.recipes as recipes
 
-        monkeypatch.setattr(examples, "fetch_text", lambda *a, **k: None)
-        assert server.list_examples() == server.examples_index_resource()
+        monkeypatch.setattr(recipes, "fetch_text", lambda *a, **k: None)
+        assert server.list_recipes() == server.recipes_index_resource()
 
 
 class TestResourceToolsContent:
@@ -40,10 +40,10 @@ class TestResourceToolsContent:
         result = json.loads(server.get_schema("NoSuchType"))
         assert "error" in result
 
-    def test_get_example_offline(self, monkeypatch, tmp_path):
-        import baybe_mcp.examples as examples
+    def test_get_recipe_offline(self, monkeypatch, tmp_path):
+        import baybe_mcp.recipes as recipes
 
         monkeypatch.setattr(server, "_CACHE_DIR", str(tmp_path))
-        monkeypatch.setattr(examples, "fetch_text", lambda *a, **k: None)
-        result = json.loads(server.get_example("Serialization", "validate_config.py"))
+        monkeypatch.setattr(recipes, "fetch_text", lambda *a, **k: None)
+        result = json.loads(server.get_recipe("Serialization", "validate_config.py"))
         assert "error" in result

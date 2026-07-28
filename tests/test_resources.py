@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from baybe_mcp import cache, examples, introspect, version
+from baybe_mcp import cache, introspect, recipes, version
 
 
 # ---------------------------------------------------------------------------
@@ -74,11 +74,11 @@ class TestIntrospection:
 
 
 # ---------------------------------------------------------------------------
-# examples (network mocked)
+# recipes (network mocked)
 # ---------------------------------------------------------------------------
 
 
-class TestExamples:
+class TestRecipes:
     def test_index_success(self, monkeypatch):
         def fake_fetch(url, timeout=10.0):
             if url.endswith("examples?ref=" + (version.get_baybe_version() or "")):
@@ -87,13 +87,14 @@ class TestExamples:
                 return json.dumps([{"name": "start.py", "type": "file"}])
             return None
 
-        monkeypatch.setattr(examples, "fetch_text", fake_fetch)
-        idx = examples.build_examples_index()
+        monkeypatch.setattr(recipes, "fetch_text", fake_fetch)
+        idx = recipes.build_recipes_index()
         assert "Basics" in idx["topics"]
         assert idx["topics"]["Basics"][0]["file"] == "start.py"
+        assert idx["topics"]["Basics"][0]["source"] == "docs"
 
     def test_index_offline_fallback(self, monkeypatch):
-        monkeypatch.setattr(examples, "fetch_text", lambda *a, **k: None)
-        idx = examples.build_examples_index()
+        monkeypatch.setattr(recipes, "fetch_text", lambda *a, **k: None)
+        idx = recipes.build_recipes_index()
         assert idx["topics"] == {}
         assert "link" in idx
