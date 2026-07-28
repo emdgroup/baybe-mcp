@@ -132,7 +132,7 @@ built-in tools.
 **Recommended workflow:** discover types with `list_types`, read a type's
 `get_schema` (consult `get_serialization_guide` and `list_examples` /
 `get_example` for patterns), build the config, confirm it with `validate`, then
-call `recommend`.
+call `recommend` (or `predict` for posterior statistics).
 
 ### `validate`
 
@@ -197,6 +197,26 @@ JSON arguments).
   }
 }
 ```
+
+### `predict`
+
+Returns posterior statistics (predictions and uncertainty) for candidate points. Fits a surrogate on the provided measurements, then computes the requested statistics -- stateless, no Campaign or server-side state.
+
+Config, candidate, and measurement inputs accept either a JSON object/array or a
+JSON string; both are handled transparently.
+
+**Inputs:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `searchspace_json` | string | yes | JSON-serialized [SearchSpace](https://emdgroup.github.io/baybe/stable/userguide/searchspace.html) |
+| `objective_json` | string | yes | JSON-serialized [Objective](https://emdgroup.github.io/baybe/stable/userguide/objectives.html) |
+| `candidates_json` | string | yes | Candidate points as a DataFrame (parameter columns only; same formats as measurements) |
+| `measurements_json` | string | yes | Past measurements used to train the surrogate (same formats below) |
+| `stats` | array or string | no | Statistics to compute: `"mean"`, `"std"`, `"var"`, `"mode"`, and floats in `(0, 1)` for quantiles. Default: `["mean", "std"]` |
+| `surrogate_json` | string | no | Surrogate config. Default: `GaussianProcessSurrogate` |
+| `output_format` | string | no | `"records"` (default) or `"base64"` |
+
+**Returns:** JSON-serialized DataFrame of posterior statistics per candidate (columns like `"<target>_mean"`, `"<target>_std"`, `"<target>_Q_0.05"`).
 
 ## Config-knowledge tools
 

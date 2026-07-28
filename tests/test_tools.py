@@ -12,7 +12,7 @@ from baybe.searchspace.core import SearchSpace
 from baybe.serialization.core import converter
 from baybe.targets.numerical import NumericalTarget
 
-from baybe_mcp.server import recommend, validate
+from baybe_mcp.server import predict, recommend, validate
 
 # ---------------------------------------------------------------------------
 # Fixtures: reusable serialized BayBE objects
@@ -196,3 +196,233 @@ class TestRecommend:
         )
         result = json.loads(result_str)
         assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# predict tool tests
+# ---------------------------------------------------------------------------
+
+MEASUREMENTS_JSON = json.dumps(
+    [
+        {"x1": 1.0, "x2": 10.0, "y": 0.5},
+        {"x1": 3.0, "x2": 20.0, "y": 0.8},
+        {"x1": 5.0, "x2": 30.0, "y": 0.2},
+    ]
+)
+
+CANDIDATES_JSON = json.dumps(
+    [
+        {"x1": 2.0, "x2": 10.0},
+        {"x1": 4.0, "x2": 30.0},
+    ]
+)
+
+
+class TestPredict:
+    def test_predict_mean_std(self):
+        """Default stats should yield mean and std columns per target."""
+        result_str = predict(
+            searchspace_json=SEARCHSPACE_JSON,
+            objective_json=OBJECTIVE_JSON,
+            candidates_json=CANDIDATES_JSON,
+            measurements_json=MEASUREMENTS_JSON,
+        )
+        result = json.loads(result_str)
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert "y_mean" in result[0]
+        assert "y_std" in result[0]
+
+    def test_predict_with_quantiles(self):
+        """Float stats should be computed as quantile columns."""
+        result_str = predict(
+            searchspace_json=SEARCHSPACE_JSON,
+            objective_json=OBJECTIVE_JSON,
+            candidates_json=CANDIDATES_JSON,
+            measurements_json=MEASUREMENTS_JSON,
+            stats=["mean", 0.05, 0.95],
+        )
+        result = json.loads(result_str)
+        assert isinstance(result, list)
+        assert "y_mean" in result[0]
+        assert "y_Q_0.05" in result[0]
+        assert "y_Q_0.95" in result[0]
+
+    def test_predict_requires_measurements(self):
+        """Empty measurements should return an error."""
+        result_str = predict(
+            searchspace_json=SEARCHSPACE_JSON,
+            objective_json=OBJECTIVE_JSON,
+            candidates_json=CANDIDATES_JSON,
+            measurements_json="[]",
+        )
+        result = json.loads(result_str)
+        assert "error" in result
+
+    def test_predict_output_base64(self):
+        """Output in base64 format should round-trip to a DataFrame."""
+        result_str = predict(
+            searchspace_json=SEARCHSPACE_JSON,
+            objective_json=OBJECTIVE_JSON,
+            candidates_json=CANDIDATES_JSON,
+            measurements_json=MEASUREMENTS_JSON,
+            output_format="base64",
+        )
+        result = json.loads(result_str)
+        assert isinstance(result, str)
+        df = converter.structure(result, pd.DataFrame)
+        assert len(df) == 2
+
+    def test_predict_custom_surrogate(self):
+        """A custom surrogate type should be accepted."""
+        result_str = predict(
+            searchspace_json=SEARCHSPACE_JSON,
+            objective_json=OBJECTIVE_JSON,
+            candidates_json=CANDIDATES_JSON,
+            measurements_json=MEASUREMENTS_JSON,
+            surrogate_json=json.dumps({"type": "RandomForestSurrogate"}),
+        )
+        result = json.loads(result_str)
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert "y_mean" in result[0]
+
+    def test_predict_unknown_surrogate(self):
+        """An unknown surrogate type should return an error."""
+        result_str = predict(
+            searchspace_json=SEARCHSPACE_JSON,
+            objective_json=OBJECTIVE_JSON,
+            candidates_json=CANDIDATES_JSON,
+            measurements_json=MEASUREMENTS_JSON,
+            surrogate_json=json.dumps({"type": "NonExistentSurrogate"}),
+        )
+        result = json.loads(result_str)
+        assert "error" in result
+        assert "Unknown surrogate type" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# predict tool: multi-target objectives
+#
+# A single-output surrogate (the default) cannot model an objective that needs
+# multiple models. These tests verify the tool replicates the surrogate per
+# target so the output shape is correct regardless of the target/stat counts.
+# ---------------------------------------------------------------------------
+
+from baybe.objectives.desirability import DesirabilityObjective  # noqa: E402
+from baybe.objectives.pareto import ParetoObjective  # noqa: E402
+
+MULTI_MEASUREMENTS_JSON = json.dumps(
+    [
+        {"x1": 1.0, "x2": 10.0, "y1": 0.5, "y2": 0.4},
+        {"x1": 3.0, "x2": 20.0, "y1": 0.8, "y2": 0.6},
+        {"x1": 5.0, "x2": 30.0, "y1": 0.2, "y2": 0.9},
+    ]
+)
+
+
+def _desirability_objective_json() -> str:
+    """A 2-target desirability objective that requires two surrogate models."""
+    t1 = NumericalTarget.normalized_ramp("y1", cutoffs=(0, 1))
+    t2 = NumericalTarget.normalized_ramp("y2", cutoffs=(0, 1))
+    return DesirabilityObjective([t1, t2], as_pre_transformation=False).to_json()
+
+
+def _pareto_objective_json() -> str:
+    """A 2-target Pareto objective (a genuine multi-output objective)."""
+    t1 = NumericalTarget("y1", minimize=False)
+    t2 = NumericalTarget("y2", minimize=False)
+    return ParetoObjective([t1, t2]).to_json()
+
+
+def test_predict_desirability_multi_target():
+    """Desirability (as_pre_transformation=False) yields per-target columns."""
+    result_str = predict(
+        searchspace_json=SEARCHSPACE_JSON,
+        objective_json=_desirability_objective_json(),
+        candidates_json=CANDIDATES_JSON,
+        measurements_json=MULTI_MEASUREMENTS_JSON,
+    )
+    result = json.loads(result_str)
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert set(result[0]) == {"y1_mean", "y1_std", "y2_mean", "y2_std"}
+
+
+def test_predict_desirability_multi_target_quantiles():
+    """Shaping stays correct with a different stat set (quantiles)."""
+    result_str = predict(
+        searchspace_json=SEARCHSPACE_JSON,
+        objective_json=_desirability_objective_json(),
+        candidates_json=CANDIDATES_JSON,
+        measurements_json=MULTI_MEASUREMENTS_JSON,
+        stats=["mean", 0.05],
+    )
+    result = json.loads(result_str)
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert set(result[0]) == {"y1_mean", "y1_Q_0.05", "y2_mean", "y2_Q_0.05"}
+
+
+def test_predict_pareto_multi_target():
+    """Pareto objectives (multi-output) yield per-target columns."""
+    result_str = predict(
+        searchspace_json=SEARCHSPACE_JSON,
+        objective_json=_pareto_objective_json(),
+        candidates_json=CANDIDATES_JSON,
+        measurements_json=MULTI_MEASUREMENTS_JSON,
+    )
+    result = json.loads(result_str)
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert set(result[0]) == {"y1_mean", "y1_std", "y2_mean", "y2_std"}
+
+
+def test_predict_single_target_unaffected():
+    """Single-target objectives are not replicated and keep single columns."""
+    measurements = json.dumps(
+        [
+            {"x1": 1.0, "x2": 10.0, "y": 0.5},
+            {"x1": 3.0, "x2": 20.0, "y": 0.8},
+            {"x1": 5.0, "x2": 30.0, "y": 0.2},
+        ]
+    )
+    result_str = predict(
+        searchspace_json=SEARCHSPACE_JSON,
+        objective_json=OBJECTIVE_JSON,
+        candidates_json=CANDIDATES_JSON,
+        measurements_json=measurements,
+    )
+    result = json.loads(result_str)
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert set(result[0]) == {"y_mean", "y_std"}
+
+
+def test_prepare_surrogate_replicates_single_output():
+    """A single-output surrogate is replicated for a multi-model objective."""
+    from baybe.objectives.base import Objective
+    from baybe.surrogates.composite import CompositeSurrogate
+    from baybe.surrogates.gaussian_process import GaussianProcessSurrogate
+
+    from baybe_mcp.server import _prepare_surrogate
+
+    objective = converter.structure(json.loads(_pareto_objective_json()), Objective)
+    surrogate = GaussianProcessSurrogate()
+    prepared = _prepare_surrogate(surrogate, objective)
+    assert isinstance(prepared, CompositeSurrogate)
+
+
+def test_prepare_surrogate_passthrough_already_replicated():
+    """An already-replicated surrogate is left untouched, not re-replicated."""
+    from baybe.objectives.base import Objective
+    from baybe.surrogates.gaussian_process import GaussianProcessSurrogate
+
+    from baybe_mcp.server import _prepare_surrogate
+
+    objective = converter.structure(json.loads(_pareto_objective_json()), Objective)
+    replicated = GaussianProcessSurrogate().replicate()
+    prepared = _prepare_surrogate(replicated, objective)
+    # Same object: the guard must not replicate a surrogate that already handles
+    # multiple targets (a CompositeSurrogate has no `replicate` method).
+    assert prepared is replicated

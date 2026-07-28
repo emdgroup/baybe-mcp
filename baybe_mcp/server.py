@@ -101,6 +101,32 @@ def _serialize_dataframe(df: pd.DataFrame, output_format: str) -> str:
     return json.dumps(df.to_dict(orient="records"))
 
 
+def _prepare_surrogate(surrogate: Any, objective: Any) -> Any:
+    """Ensure the surrogate can model the objective's targets.
+
+    A single-output surrogate cannot model an objective that requires multiple
+    models (a ``ParetoObjective``, or a ``DesirabilityObjective`` with
+    ``as_pre_transformation=False``): its ``fit`` is rejected and/or its
+    ``posterior_stats`` fails to shape the result. Replicating the surrogate
+    yields a ``CompositeSurrogate`` with one sub-model per target, which fits
+    and computes posterior statistics correctly. A surrogate that already
+    handles multiple targets -- one that declares multi-output support, or one
+    that has no ``replicate`` method such as a ``CompositeSurrogate`` -- is left
+    untouched.
+
+    MAINTENANCE: This is a workaround. If BayBE learns to handle multi-model
+    objectives for single-output surrogates directly upstream, remove this and
+    pass the surrogate through unchanged.
+    """
+    if (
+        getattr(objective, "_is_multi_model", False)
+        and not getattr(surrogate, "supports_multi_output", False)
+        and hasattr(surrogate, "replicate")
+    ):
+        surrogate = surrogate.replicate()
+    return surrogate
+
+
 # ---------------------------------------------------------------------------
 # MCP Server
 # ---------------------------------------------------------------------------
@@ -458,6 +484,103 @@ def recommend(
             measurements=measurements,
             pending_experiments=pending_experiments,
         )
+
+        return _serialize_dataframe(result, output_format)
+
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
+def predict(
+    searchspace_json: str | dict,
+    objective_json: str | dict,
+    candidates_json: str | list | dict,
+    measurements_json: str | list | dict,
+    stats: list | str | None = None,
+    surrogate_json: str | dict | None = None,
+    output_format: str = "records",
+) -> str:
+    """Get posterior statistics (predictions and uncertainty) for candidates.
+
+    Fits a surrogate model on the provided measurements and returns posterior
+    statistics for each candidate point, without maintaining any server-side
+    state (no Campaign object). All context must be passed explicitly.
+
+    Before calling this, build each config using `get_schema` (and
+    `get_serialization_guide` / `get_example` for patterns), then confirm each
+    with `validate`. If this returns an {"error": ...}, re-check the offending
+    config with `validate` or `get_schema` and retry.
+
+    Config, candidate, and measurement arguments accept either a JSON
+    object/array or a JSON string; both forms are handled transparently.
+
+    Args:
+        searchspace_json: BayBE SearchSpace as a JSON object or string.
+        objective_json: BayBE Objective as a JSON object or string.
+        candidates_json: Candidate points to predict for, as a DataFrame. Uses
+            the same formats as measurements: records (a JSON array
+            [{"col": val}, ...]), a constructor dict, or a base64 string (BayBE
+            native). Only parameter columns are required (no target values).
+        measurements_json: Past measurements used to train the surrogate, as a
+            DataFrame (same formats as candidates). Required: the surrogate
+            cannot be trained without data.
+        stats: Which statistics to compute, as a JSON array or string. Accepts
+            "mean", "std", "var", "mode", and floats in the open interval (0, 1)
+            for quantiles (e.g. [0.05, 0.95]). Defaults to ["mean", "std"].
+        surrogate_json: Optional surrogate config as a JSON object or string.
+            Defaults to GaussianProcessSurrogate. For multi-target objectives
+            (a ParetoObjective, or a DesirabilityObjective without
+            pre-transformation), a single-output surrogate is automatically
+            replicated per target, yielding per-target output columns.
+        output_format: Output format for statistics: "records" (default, list
+            of dicts) or "base64" (BayBE native).
+
+    Returns:
+        JSON string with a DataFrame of posterior statistics per candidate
+        (columns like "<target>_mean", "<target>_std", "<target>_Q_0.05"), or
+        error details.
+    """
+    from baybe.objectives.base import Objective
+    from baybe.searchspace.core import SearchSpace
+    from baybe.surrogates.gaussian_process import GaussianProcessSurrogate
+
+    try:
+        searchspace = converter.structure(_as_obj(searchspace_json), SearchSpace)
+        objective = converter.structure(_as_obj(objective_json), Objective)
+
+        candidates = _deserialize_dataframe(candidates_json)
+
+        measurements = _deserialize_dataframe(measurements_json)
+        if measurements.empty:
+            return json.dumps(
+                {"error": "measurements are required to train the surrogate."}
+            )
+
+        if stats is None:
+            requested_stats: Any = ["mean", "std"]
+        else:
+            requested_stats = _as_obj(stats)
+            if not isinstance(requested_stats, list):
+                requested_stats = [requested_stats]
+
+        if surrogate_json is not None:
+            surr_data = _as_obj(surrogate_json)
+            type_name = surr_data.get("type")
+            if type_name is None:
+                return json.dumps(
+                    {"error": 'Missing "type" field in surrogate config.'}
+                )
+            cls = NAME_TO_CLASS.get(type_name)
+            if cls is None:
+                return json.dumps({"error": f"Unknown surrogate type: '{type_name}'"})
+            surrogate = converter.structure(surr_data, cls)
+        else:
+            surrogate = GaussianProcessSurrogate()
+
+        surrogate = _prepare_surrogate(surrogate, objective)
+        surrogate.fit(searchspace, objective, measurements)
+        result = surrogate.posterior_stats(candidates, stats=requested_stats)
 
         return _serialize_dataframe(result, output_format)
 
