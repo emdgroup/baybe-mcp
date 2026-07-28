@@ -5,7 +5,7 @@ optimization to AI agents. It offers stateless tools for recommendations,
 predictions, and parameter importance, plus resources that teach an agent how to
 build valid BayBE configurations for the installed BayBE version.
 
-## Design principles
+## Design Principles
 
 - **Stateless.** No Campaign or server-side state is kept. Every tool call
   carries its full context (search space, objective, measurements).
@@ -22,7 +22,7 @@ build valid BayBE configurations for the installed BayBE version.
 - **Custom recipes.** Users can add their own `.md` recipes that are merged
   alongside the documentation-derived ones.
 
-## Local install (for testing)
+## Local Install
 
 Requires Python >= 3.10 and [uv](https://docs.astral.sh/uv/).
 
@@ -36,7 +36,7 @@ BayBE is required at `baybe[chem,insights]>=0.15` (the `chem` and `insights`
 extras enable substance parameters and SHAP-based insights). `uv.lock` pins the
 exact resolved dependency set.
 
-### OpenCode (stdio)
+### OpenCode
 
 Add to `~/.config/opencode/opencode.json` (or a project-level `opencode.json`):
 
@@ -56,7 +56,7 @@ Add to `~/.config/opencode/opencode.json` (or a project-level `opencode.json`):
 
 The raised timeout accounts for the slow initial import of BayBE and PyTorch.
 
-### Claude Desktop (stdio)
+### Claude Desktop
 
 Add to `claude_desktop_config.json`:
 
@@ -71,7 +71,7 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-## Remote install (HTTP)
+## Remote Install
 
 Run the server as a persistent process; clients connect by URL:
 
@@ -96,7 +96,7 @@ Point clients at the URL:
 { "mcpServers": { "baybe": { "url": "http://127.0.0.1:8000/mcp" } } }
 ```
 
-## Resources, caching, and custom recipes
+## Resources, Caching, Custom Recipes
 
 The server exposes resources (types, schemata, concepts, recipes, doc links)
 derived from the installed BayBE version. Fetched content is stored in a cache
@@ -126,7 +126,7 @@ subfolder name as their topic; top-level files are grouped under
 `Custom_Recipes`. They appear in `list_recipes` / `baybe://recipes` tagged with
 `source: user` and are baked into the cache at build time.
 
-## Tools and resources
+## Tools & Resources
 
 **Action tools** (all stateless; config/dataframe arguments accept a JSON
 object/array or a JSON string):
