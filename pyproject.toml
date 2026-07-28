@@ -4,7 +4,7 @@ version = "0.3.0"
 description = "MCP server exposing BayBE's Bayesian optimization as tools for AI agents"
 requires-python = ">=3.10"
 dependencies = [
-    "baybe==0.15.0",
+    "baybe[chem,insights]>=0.15",
     "mcp[cli]",
 ]
 
