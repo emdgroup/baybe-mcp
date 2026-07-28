@@ -522,3 +522,26 @@ def test_parameter_importance_unknown_surrogate():
     result = json.loads(result_str)
     assert "error" in result
     assert "Unknown surrogate type" in result["error"]
+
+
+def test_parameter_importance_description_lists_explainers():
+    """The tool description lists all valid explainers for the loaded version."""
+    from baybe.insights.shap import NON_SHAP_EXPLAINERS, SHAP_EXPLAINERS
+
+    from baybe_mcp.server import _PARAMETER_IMPORTANCE_DESCRIPTION
+
+    description = _PARAMETER_IMPORTANCE_DESCRIPTION
+    for name in SHAP_EXPLAINERS | NON_SHAP_EXPLAINERS:
+        assert name in description
+    assert "KernelExplainer" in description
+    assert "use_comp_rep" in description
+
+
+def test_schema_shapinsight_valid_explainers():
+    """The SHAPInsight schema exposes the valid explainer names."""
+    from baybe.insights.shap import EXPLAINERS
+
+    from baybe_mcp.introspect import build_schema
+
+    schema = build_schema("SHAPInsight")
+    assert schema["valid_explainers"] == sorted(EXPLAINERS)
