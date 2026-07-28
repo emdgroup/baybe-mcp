@@ -22,11 +22,11 @@ class TestToolResourceParity:
     def test_get_docs_links_matches_resource(self):
         assert server.get_docs_links() == server.docs_resource()
 
-    def test_get_serialization_guide_matches_resource(self, monkeypatch):
-        import baybe_mcp.guide as guide
+    def test_list_concepts_matches_resource(self, monkeypatch):
+        import baybe_mcp.concepts as concepts
 
-        monkeypatch.setattr(guide, "fetch_text", lambda *a, **k: "# Guide")
-        assert server.get_serialization_guide() == server.serialization_guide_resource()
+        monkeypatch.setattr(concepts, "fetch_text", lambda *a, **k: None)
+        assert server.list_concepts() == server.concepts_index_resource()
 
     def test_list_examples_matches_resource(self, monkeypatch):
         import baybe_mcp.examples as examples

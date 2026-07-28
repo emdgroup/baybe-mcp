@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from baybe_mcp import cache, examples, guide, introspect, version
+from baybe_mcp import cache, examples, introspect, version
 
 
 # ---------------------------------------------------------------------------
@@ -74,21 +74,8 @@ class TestIntrospection:
 
 
 # ---------------------------------------------------------------------------
-# guide + examples (network mocked)
+# examples (network mocked)
 # ---------------------------------------------------------------------------
-
-
-class TestGuide:
-    def test_guide_success(self, monkeypatch):
-        monkeypatch.setattr(guide, "fetch_text", lambda *a, **k: "# Serialization\n...")
-        result = guide.build_guide()
-        assert result["content"].startswith("# Serialization")
-
-    def test_guide_offline_fallback(self, monkeypatch):
-        monkeypatch.setattr(guide, "fetch_text", lambda *a, **k: None)
-        result = guide.build_guide()
-        assert "content" not in result
-        assert "link" in result
 
 
 class TestExamples:

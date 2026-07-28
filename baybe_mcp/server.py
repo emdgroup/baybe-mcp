@@ -201,10 +201,9 @@ def _docs_links() -> dict:
     return {
         "baybe_version": version,
         "links": {
-            "user_guide": f"{base}/userguide/userguide.html",
-            "serialization": f"{base}/userguide/serialization.html",
+            "serialization": f"{base}/concepts/serialization.html",
             "getting_recommendations": (
-                f"{base}/userguide/getting_recommendations.html"
+                f"{base}/concepts/getting_recommendations.html"
             ),
             "examples": f"{base}/examples/examples.html",
             "api": f"{base}/_autosummary/baybe.html",
@@ -218,17 +217,6 @@ def _docs_payload() -> str:
     if cached is not None:
         return json.dumps(cached)
     return json.dumps(_docs_links())
-
-
-def _guide_payload() -> str:
-    """Serialization guide, from cache if available, else fetched live."""
-    cached = _read_cached_json("guide_serialization.json")
-    if cached is not None:
-        return json.dumps(cached)
-
-    from baybe_mcp.guide import build_guide
-
-    return json.dumps(build_guide())
 
 
 def _examples_index_payload() -> str:
@@ -353,25 +341,6 @@ def _build_docs(cache_dir) -> None:
     (cache_dir / "docs.json").write_text(json.dumps(_docs_links(), indent=2))
 
 
-@mcp.resource("baybe://guide/serialization")
-def serialization_guide_resource() -> str:
-    """Return the BayBE serialization guide for the installed version.
-
-    Served from cache if available; otherwise fetched live, with a link
-    fallback when offline.
-    """
-    return _guide_payload()
-
-
-def _build_guide(cache_dir) -> None:
-    """Cache builder for baybe://guide/serialization."""
-    from baybe_mcp.guide import build_guide
-
-    (cache_dir / "guide_serialization.json").write_text(
-        json.dumps(build_guide(), indent=2)
-    )
-
-
 @mcp.resource("baybe://examples")
 def examples_index_resource() -> str:
     """Return the index of BayBE example scenarios (topics and files)."""
@@ -485,7 +454,7 @@ def recommend(
     state (no Campaign object). All context must be passed explicitly.
 
     Before calling this, build each config using `get_schema` (and
-    `get_serialization_guide` / `get_example` for patterns), then confirm each
+    `get_concept` / `get_example` for patterns), then confirm each
     with `validate`. If this returns an {"error": ...}, re-check the offending
     config with `validate` or `get_schema` and retry.
 
@@ -570,7 +539,7 @@ def predict(
     state (no Campaign object). All context must be passed explicitly.
 
     Before calling this, build each config using `get_schema` (and
-    `get_serialization_guide` / `get_example` for patterns), then confirm each
+    `get_concept` / `get_example` for patterns), then confirm each
     with `validate`. If this returns an {"error": ...}, re-check the offending
     config with `validate` or `get_schema` and retry.
 
@@ -659,7 +628,7 @@ SHAP value of a parameter over the measurements. Stateless: no Campaign or \
 server-side state is kept.
 
 Before calling this, build each config using `get_schema` (and \
-`get_serialization_guide` / `get_example` for patterns), then confirm each with \
+`get_concept` / `get_example` for patterns), then confirm each with \
 `validate`. If this returns an {{"error": ...}}, re-check the offending config \
 with `validate` or `get_schema` and retry.
 
@@ -805,23 +774,12 @@ def get_schema(type_name: str) -> str:
     Workflow: discover types with `list_types`, read the schema here, build the
     config, then confirm it with `validate` before calling `recommend`. For
     conventions the schema does not convey (constructor forms, string
-    shortcuts, abbreviations), see `get_serialization_guide`.
+    shortcuts, abbreviations), see `get_concept("serialization")`.
 
     Args:
         type_name: The concrete BayBE type name (e.g. "NumericalDiscreteParameter").
     """
     return _schema_payload(type_name)
-
-
-@mcp.tool()
-def get_serialization_guide() -> str:
-    """Get the BayBE serialization guide for the installed version.
-
-    Consult this when a schema alone is not enough: it explains conventions such
-    as alternative constructors, string shortcuts, abbreviations, and dataframe
-    formats. Complements `get_schema`.
-    """
-    return _guide_payload()
 
 
 @mcp.tool()
@@ -893,7 +851,6 @@ from baybe_mcp.resources import register_builder  # noqa: E402
 register_builder("types", _build_types)
 register_builder("schema", _build_schema)
 register_builder("docs", _build_docs)
-register_builder("guide", _build_guide)
 register_builder("examples", _build_examples)
 register_builder("concepts", _build_concepts)
 
