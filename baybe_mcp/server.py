@@ -10,8 +10,13 @@ from typing import Any
 import attrs
 import baybe
 import pandas as pd
+from baybe.insights.shap import NON_SHAP_EXPLAINERS, SHAP_EXPLAINERS
 from baybe.serialization.core import converter
 from mcp.server.fastmcp import FastMCP
+
+# Valid SHAP explainer names, derived from the loaded BayBE version so the tool
+# description always matches what is actually available at runtime.
+_ALL_EXPLAINERS = sorted(SHAP_EXPLAINERS | NON_SHAP_EXPLAINERS)
 
 # ---------------------------------------------------------------------------
 # Class discovery: build a map of all concrete attrs classes in baybe
@@ -588,7 +593,55 @@ def predict(
         return json.dumps({"error": str(exc)})
 
 
-@mcp.tool()
+_PARAMETER_IMPORTANCE_DESCRIPTION = f"""\
+Get SHAP-based parameter importance for each target.
+
+Fits a surrogate on the provided measurements, then uses SHAP to attribute the \
+model output to each search space parameter. Importance is the mean absolute \
+SHAP value of a parameter over the measurements. Stateless: no Campaign or \
+server-side state is kept.
+
+Before calling this, build each config using `get_schema` (and \
+`get_serialization_guide` / `get_example` for patterns), then confirm each with \
+`validate`. If this returns an {{"error": ...}}, re-check the offending config \
+with `validate` or `get_schema` and retry.
+
+Config and measurement arguments accept either a JSON object/array or a JSON \
+string; both forms are handled transparently.
+
+Valid explainer values: {", ".join(_ALL_EXPLAINERS)}. Only KernelExplainer \
+supports categorical parameters in the experimental representation \
+(use_comp_rep=False). All other explainers require use_comp_rep=True when the \
+search space contains categorical parameters; with no categorical parameters, \
+any explainer works with use_comp_rep=False.
+
+Args:
+    searchspace_json: BayBE SearchSpace as a JSON object or string.
+    objective_json: BayBE Objective as a JSON object or string.
+    measurements_json: Past measurements used to train the surrogate and as
+        SHAP background data, as a DataFrame. Accepts records (a JSON array
+        [{{"col": val}}, ...]), a constructor dict, or a base64 string (BayBE
+        native). Required: the surrogate cannot be trained without data.
+    surrogate_json: Optional surrogate config as a JSON object or string.
+        Defaults to GaussianProcessSurrogate. For multi-target objectives
+        (a ParetoObjective, or a DesirabilityObjective without
+        pre-transformation), a single-output surrogate is automatically
+        replicated per target.
+    explainer: SHAP explainer class name (default "KernelExplainer"). See the
+        valid values listed above.
+    use_comp_rep: Explain the computational representation instead of the
+        experimental one. Defaults to False.
+    output_format: Output format: "records" (default, list of dicts) or
+        "base64" (BayBE native).
+
+Returns:
+    JSON string with a DataFrame of importances, one row per parameter: a
+    "parameter" column plus one "<target>_importance" column per target. Or
+    error details.
+"""
+
+
+@mcp.tool(description=_PARAMETER_IMPORTANCE_DESCRIPTION)
 def parameter_importance(
     searchspace_json: str | dict,
     objective_json: str | dict,
@@ -600,42 +653,9 @@ def parameter_importance(
 ) -> str:
     """Get SHAP-based parameter importance for each target.
 
-    Fits a surrogate on the provided measurements, then uses SHAP to attribute
-    the model output to each search space parameter. Importance is the mean
-    absolute SHAP value of a parameter over the measurements. Stateless: no
-    Campaign or server-side state is kept.
-
-    Before calling this, build each config using `get_schema` (and
-    `get_serialization_guide` / `get_example` for patterns), then confirm each
-    with `validate`. If this returns an {"error": ...}, re-check the offending
-    config with `validate` or `get_schema` and retry.
-
-    Config and measurement arguments accept either a JSON object/array or a JSON
-    string; both forms are handled transparently.
-
-    Args:
-        searchspace_json: BayBE SearchSpace as a JSON object or string.
-        objective_json: BayBE Objective as a JSON object or string.
-        measurements_json: Past measurements used to train the surrogate and as
-            SHAP background data, as a DataFrame. Accepts records (a JSON array
-            [{"col": val}, ...]), a constructor dict, or a base64 string (BayBE
-            native). Required: the surrogate cannot be trained without data.
-        surrogate_json: Optional surrogate config as a JSON object or string.
-            Defaults to GaussianProcessSurrogate. For multi-target objectives
-            (a ParetoObjective, or a DesirabilityObjective without
-            pre-transformation), a single-output surrogate is automatically
-            replicated per target.
-        explainer: SHAP explainer class name (default "KernelExplainer").
-        use_comp_rep: Explain the computational representation instead of the
-            experimental one. Required for some explainers with categorical
-            parameters. Defaults to False.
-        output_format: Output format: "records" (default, list of dicts) or
-            "base64" (BayBE native).
-
-    Returns:
-        JSON string with a DataFrame of importances, one row per parameter: a
-        "parameter" column plus one "<target>_importance" column per target. Or
-        error details.
+    The full tool description, including the valid explainer names for the
+    installed BayBE version, is built dynamically in
+    ``_PARAMETER_IMPORTANCE_DESCRIPTION`` and surfaced to MCP clients.
     """
     import numpy as np
     from baybe.insights.shap import SHAPInsight
