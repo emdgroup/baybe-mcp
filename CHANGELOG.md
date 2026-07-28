@@ -5,12 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-07-28
 ### Added
-- `predict` tool returning posterior statistics (predictions and uncertainty)
-  for candidate points. Fits a surrogate (default `GaussianProcessSurrogate`) on
-  the provided measurements, then computes the requested statistics (`mean`,
-  `std`, `var`, `mode`, and quantiles) -- stateless, no Campaign.
+- `predict` tool: stateless posterior statistics (predictions and uncertainty)
+  for candidate points. Fits a surrogate on the provided measurements and
+  returns the requested statistics.
+- `predict` supports `mean`, `std`, `var`, `mode`, and quantile statistics, an
+  optional surrogate config (default `GaussianProcessSurrogate`), and `records`
+  or `base64` output.
+- `predict` supports multi-target objectives (`ParetoObjective`,
+  `DesirabilityObjective` without pre-transformation) by replicating a
+  single-output surrogate per target, yielding per-target output columns.
 
 ## [0.2.0] - 2026-07-27
 ### Added
