@@ -136,7 +136,27 @@ def _prepare_surrogate(surrogate: Any, objective: Any) -> Any:
 # MCP Server
 # ---------------------------------------------------------------------------
 
-mcp = FastMCP("baybe-mcp")
+_WORKFLOW = """\
+BayBE MCP workflow for modelling and optimizing an experimental campaign:
+
+1. Understand the goal. Study the relevant concepts (`list_concepts`,
+   `get_concept`) and worked recipes (`list_recipes`, `get_recipe`) to decide
+   how to model the user's project: parameters, objective, constraints, and
+   recommender.
+2. Learn serialization. Read `get_concept("serialization")` to understand how
+   BayBE objects are represented as JSON (types, constructors, shortcuts).
+3. Discover and study schemata. Use `list_types`, then `get_schema` for each
+   object you will build.
+4. Build the JSON configs, then `validate` each one before use.
+5. Act: `recommend` proposes the next experiments (the central tool); `predict`
+   returns posterior statistics; `parameter_importance` returns SHAP-based
+   parameter importance.
+
+The server is stateless: every call must carry full context (search space,
+objective, measurements). Nothing persists server-side.
+"""
+
+mcp = FastMCP("baybe-mcp", instructions=_WORKFLOW)
 
 
 # ---------------------------------------------------------------------------
@@ -157,8 +177,9 @@ def _read_cached_json(filename: str):
         return None
 
 
-# Cache dir used by resources at serve time; set during startup.
+# Cache dir and user recipes dir used by resources at serve time; set at startup.
 _CACHE_DIR: str | None = None
+_RECIPES_DIR: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -201,10 +222,9 @@ def _docs_links() -> dict:
     return {
         "baybe_version": version,
         "links": {
-            "user_guide": f"{base}/userguide/userguide.html",
-            "serialization": f"{base}/userguide/serialization.html",
+            "serialization": f"{base}/concepts/serialization.html",
             "getting_recommendations": (
-                f"{base}/userguide/getting_recommendations.html"
+                f"{base}/concepts/getting_recommendations.html"
             ),
             "examples": f"{base}/examples/examples.html",
             "api": f"{base}/_autosummary/baybe.html",
@@ -220,43 +240,85 @@ def _docs_payload() -> str:
     return json.dumps(_docs_links())
 
 
-def _guide_payload() -> str:
-    """Serialization guide, from cache if available, else fetched live."""
-    cached = _read_cached_json("guide_serialization.json")
+def _recipes_index_payload() -> str:
+    """Recipes index, from cache if available, else computed live.
+
+    User recipes are always merged from the recipes dir so newly added recipes
+    appear even against a cache built before they existed.
+    """
+    cached = _read_cached_json("recipes_index.json")
     if cached is not None:
         return json.dumps(cached)
 
-    from baybe_mcp.guide import build_guide
+    from baybe_mcp.recipes import build_recipes_index
 
-    return json.dumps(build_guide())
-
-
-def _examples_index_payload() -> str:
-    """Examples index, from cache if available, else computed live."""
-    cached = _read_cached_json("examples_index.json")
-    if cached is not None:
-        return json.dumps(cached)
-
-    from baybe_mcp.examples import build_examples_index
-
-    return json.dumps(build_examples_index())
+    return json.dumps(build_recipes_index(_RECIPES_DIR))
 
 
-def _example_file_payload(topic: str, filename: str) -> str:
-    """Raw content of a single example file; fetched lazily and cached."""
+def _recipe_file_payload(topic: str, filename: str) -> str:
+    """Raw content of a single recipe file; fetched lazily and cached.
+
+    Doc recipes are fetched from GitHub; user recipes are read from the recipes
+    directory. Cached content (including baked user recipes) is served directly.
+    """
     from baybe_mcp.cache import resolve_cache_dir
 
-    cache_path = resolve_cache_dir(_CACHE_DIR) / f"examples/{topic}/{filename}"
+    cache_path = resolve_cache_dir(_CACHE_DIR) / f"recipes/{topic}/{filename}"
     if cache_path.is_file():
         return cache_path.read_text()
 
-    from baybe_mcp.examples import fetch_example
+    # User recipes live on disk in the recipes dir, not on GitHub.
+    user_path = _find_user_recipe(_resolve_recipes_dir(), topic, filename)
+    if user_path is not None:
+        return user_path.read_text()
 
-    content = fetch_example(topic, filename)
+    from baybe_mcp.recipes import fetch_recipe
+
+    content = fetch_recipe(topic, filename)
     if content is None:
         return json.dumps(
-            {"error": f"Could not fetch example {topic}/{filename} (offline?)."}
+            {"error": f"Could not fetch recipe {topic}/{filename} (offline?)."}
         )
+
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(content)
+    except OSError:
+        pass
+    return content
+
+
+def _resolve_recipes_dir():
+    """Resolve the serve-time user recipes directory."""
+    from baybe_mcp.cache import resolve_recipes_dir
+
+    return resolve_recipes_dir(_RECIPES_DIR)
+
+
+def _concepts_index_payload() -> str:
+    """Concepts index, from cache if available, else computed live."""
+    cached = _read_cached_json("concepts_index.json")
+    if cached is not None:
+        return json.dumps(cached)
+
+    from baybe_mcp.concepts import build_concepts_index
+
+    return json.dumps(build_concepts_index())
+
+
+def _concept_payload(name: str) -> str:
+    """Raw content of a single concept page; fetched lazily and cached."""
+    from baybe_mcp.cache import resolve_cache_dir
+
+    cache_path = resolve_cache_dir(_CACHE_DIR) / f"concepts/{name}.md"
+    if cache_path.is_file():
+        return cache_path.read_text()
+
+    from baybe_mcp.concepts import fetch_concept
+
+    content = fetch_concept(name)
+    if content is None:
+        return json.dumps({"error": f"Could not fetch concept '{name}' (offline?)."})
 
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -280,7 +342,7 @@ def types_resource() -> str:
     return _types_payload()
 
 
-def _build_types(cache_dir) -> None:
+def _build_types(cache_dir, recipes_dir=None) -> None:
     """Cache builder for baybe://types."""
     from baybe_mcp.introspect import build_types_tree
 
@@ -297,7 +359,7 @@ def schema_resource(type_name: str) -> str:
     return _schema_payload(type_name)
 
 
-def _build_schema(cache_dir) -> None:
+def _build_schema(cache_dir, recipes_dir=None) -> None:
     """Cache builder for baybe://schema/{type}."""
     from baybe_mcp.introspect import build_schema, discover_baybe_classes
 
@@ -315,51 +377,89 @@ def docs_resource() -> str:
     return _docs_payload()
 
 
-def _build_docs(cache_dir) -> None:
+def _build_docs(cache_dir, recipes_dir=None) -> None:
     """Cache builder for baybe://docs."""
     (cache_dir / "docs.json").write_text(json.dumps(_docs_links(), indent=2))
 
 
-@mcp.resource("baybe://guide/serialization")
-def serialization_guide_resource() -> str:
-    """Return the BayBE serialization guide for the installed version.
-
-    Served from cache if available; otherwise fetched live, with a link
-    fallback when offline.
-    """
-    return _guide_payload()
+@mcp.resource("baybe://recipes")
+def recipes_index_resource() -> str:
+    """Return the index of BayBE recipes (worked scenarios by topic)."""
+    return _recipes_index_payload()
 
 
-def _build_guide(cache_dir) -> None:
-    """Cache builder for baybe://guide/serialization."""
-    from baybe_mcp.guide import build_guide
-
-    (cache_dir / "guide_serialization.json").write_text(
-        json.dumps(build_guide(), indent=2)
-    )
-
-
-@mcp.resource("baybe://examples")
-def examples_index_resource() -> str:
-    """Return the index of BayBE example scenarios (topics and files)."""
-    return _examples_index_payload()
-
-
-@mcp.resource("baybe://examples/{topic}/{filename}")
-def example_file_resource(topic: str, filename: str) -> str:
-    """Return the raw content of a single example scenario file.
+@mcp.resource("baybe://recipes/{topic}/{filename}")
+def recipe_file_resource(topic: str, filename: str) -> str:
+    """Return the raw content of a single recipe file.
 
     Fetched lazily and cached on first access.
     """
-    return _example_file_payload(topic, filename)
+    return _recipe_file_payload(topic, filename)
 
 
-def _build_examples(cache_dir) -> None:
-    """Cache builder for the examples index (files fetched lazily)."""
-    from baybe_mcp.examples import build_examples_index
+def _build_recipes(cache_dir, recipes_dir=None) -> None:
+    """Cache builder for the recipes index.
 
-    (cache_dir / "examples_index.json").write_text(
-        json.dumps(build_examples_index(), indent=2)
+    Doc recipe files are fetched lazily; user recipe files are baked into the
+    cache now so they are served without touching the recipes dir at run time.
+    """
+    from baybe_mcp.recipes import build_recipes_index
+
+    index = build_recipes_index(recipes_dir)
+    (cache_dir / "recipes_index.json").write_text(json.dumps(index, indent=2))
+
+    if recipes_dir is None:
+        return
+    from pathlib import Path
+
+    recipes_dir = Path(recipes_dir)
+    for entries in index.get("topics", {}).values():
+        for entry in entries:
+            if entry.get("source") != "user":
+                continue
+            uri = entry["resource"].removeprefix("baybe://recipes/")
+            topic, _, filename = uri.partition("/")
+            src = _find_user_recipe(recipes_dir, topic, filename)
+            if src is None:
+                continue
+            dest = cache_dir / "recipes" / topic / filename
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(src.read_text())
+
+
+def _find_user_recipe(recipes_dir, topic: str, filename: str):
+    """Locate a user recipe file on disk given its index topic and filename."""
+    from baybe_mcp.recipes import USER_TOPIC
+
+    candidate = (
+        recipes_dir / filename
+        if topic == USER_TOPIC
+        else recipes_dir / topic / filename
+    )
+    return candidate if candidate.is_file() else None
+
+
+@mcp.resource("baybe://concepts")
+def concepts_index_resource() -> str:
+    """Return the index of BayBE concept explanation pages."""
+    return _concepts_index_payload()
+
+
+@mcp.resource("baybe://concepts/{name}")
+def concept_resource(name: str) -> str:
+    """Return the raw Markdown of a single BayBE concept page.
+
+    Fetched lazily and cached on first access.
+    """
+    return _concept_payload(name)
+
+
+def _build_concepts(cache_dir, recipes_dir=None) -> None:
+    """Cache builder for the concepts index (pages fetched lazily)."""
+    from baybe_mcp.concepts import build_concepts_index
+
+    (cache_dir / "concepts_index.json").write_text(
+        json.dumps(build_concepts_index(), indent=2)
     )
 
 
@@ -424,13 +524,20 @@ def recommend(
 ) -> str:
     """Get stateless Bayesian optimization recommendations.
 
-    Performs a single recommendation step without maintaining any server-side
-    state (no Campaign object). All context must be passed explicitly.
+    This is the central tool. It performs a single recommendation step without
+    maintaining any server-side state (no Campaign object); all context must be
+    passed explicitly.
 
-    Before calling this, build each config using `get_schema` (and
-    `get_serialization_guide` / `get_example` for patterns), then confirm each
-    with `validate`. If this returns an {"error": ...}, re-check the offending
-    config with `validate` or `get_schema` and retry.
+    Recommended workflow before calling this:
+    1. Understand the goal: study `list_concepts` / `get_concept` and
+       `list_recipes` / `get_recipe` to decide how to model the project
+       (parameters, objective, constraints, recommender).
+    2. Learn serialization: read `get_concept("serialization")` for how objects
+       are represented as JSON.
+    3. Study schemata: `list_types`, then `get_schema` for each object you build.
+    4. Build the configs, then confirm each with `validate`.
+    5. Call this tool. If it returns an {"error": ...}, re-check the offending
+       config with `validate` or `get_schema` and retry.
 
     Config and measurement arguments accept either a JSON object/array or a
     JSON string; both forms are handled transparently.
@@ -513,7 +620,7 @@ def predict(
     state (no Campaign object). All context must be passed explicitly.
 
     Before calling this, build each config using `get_schema` (and
-    `get_serialization_guide` / `get_example` for patterns), then confirm each
+    `get_concept` / `get_recipe` for patterns), then confirm each
     with `validate`. If this returns an {"error": ...}, re-check the offending
     config with `validate` or `get_schema` and retry.
 
@@ -602,7 +709,7 @@ SHAP value of a parameter over the measurements. Stateless: no Campaign or \
 server-side state is kept.
 
 Before calling this, build each config using `get_schema` (and \
-`get_serialization_guide` / `get_example` for patterns), then confirm each with \
+`get_concept` / `get_recipe` for patterns), then confirm each with \
 `validate`. If this returns an {{"error": ...}}, re-check the offending config \
 with `validate` or `get_schema` and retry.
 
@@ -748,7 +855,7 @@ def get_schema(type_name: str) -> str:
     Workflow: discover types with `list_types`, read the schema here, build the
     config, then confirm it with `validate` before calling `recommend`. For
     conventions the schema does not convey (constructor forms, string
-    shortcuts, abbreviations), see `get_serialization_guide`.
+    shortcuts, abbreviations), see `get_concept("serialization")`.
 
     Args:
         type_name: The concrete BayBE type name (e.g. "NumericalDiscreteParameter").
@@ -757,47 +864,62 @@ def get_schema(type_name: str) -> str:
 
 
 @mcp.tool()
-def get_serialization_guide() -> str:
-    """Get the BayBE serialization guide for the installed version.
+def list_recipes() -> str:
+    """List BayBE recipes, grouped by topic.
 
-    Consult this when a schema alone is not enough: it explains conventions such
-    as alternative constructors, string shortcuts, abbreviations, and dataframe
-    formats. Complements `get_schema`.
-    """
-    return _guide_payload()
-
-
-@mcp.tool()
-def list_examples() -> str:
-    """List BayBE example scenarios, grouped by topic.
-
-    Use these for complete, working modelling scenarios (assembling a whole
+    Recipes are complete, working modelling scenarios (assembling a whole
     search space + objective + recommender), complementing the per-type
-    `get_schema`. Fetch a specific file with `get_example`.
+    `get_schema`. Study relevant recipes before modelling a project. Fetch a
+    specific file with `get_recipe`.
     """
-    return _examples_index_payload()
+    return _recipes_index_payload()
 
 
 @mcp.tool()
-def get_example(topic: str, filename: str) -> str:
-    """Get the raw content of a single BayBE example scenario file.
+def get_recipe(topic: str, filename: str) -> str:
+    """Get the raw content of a single BayBE recipe file.
 
     Returns a comprehensive, working modelling scenario. Discover available
-    files with `list_examples` first.
+    files with `list_recipes` first.
 
     Args:
-        topic: The example topic folder (e.g. "Serialization").
-        filename: The example file name (e.g. "validate_config.py").
+        topic: The recipe topic folder (e.g. "Serialization", "Custom_Recipes").
+        filename: The recipe file name (e.g. "validate_config.py").
     """
-    return _example_file_payload(topic, filename)
+    return _recipe_file_payload(topic, filename)
+
+
+@mcp.tool()
+def list_concepts() -> str:
+    """List BayBE concept explanation pages.
+
+    Concepts explain how BayBE works (e.g. getting recommendations,
+    serialization, transfer learning, active learning). Study relevant concepts
+    before modelling a project. Fetch a page with `get_concept`.
+    """
+    return _concepts_index_payload()
+
+
+@mcp.tool()
+def get_concept(name: str) -> str:
+    """Get the raw Markdown of a single BayBE concept page.
+
+    Discover available pages with `list_concepts` first. Read
+    `get_concept("serialization")` to learn how objects are represented as JSON
+    before building configs.
+
+    Args:
+        name: The concept page name (e.g. "serialization", "transfer_learning").
+    """
+    return _concept_payload(name)
 
 
 @mcp.tool()
 def get_docs_links() -> str:
     """Get version-matched links to the BayBE documentation.
 
-    A fallback for deeper reference beyond what `get_schema`,
-    `get_serialization_guide`, and the example tools provide.
+    A fallback for deeper reference beyond what `get_schema`, the concept tools,
+    and the recipe tools provide.
     """
     return _docs_payload()
 
@@ -811,8 +933,8 @@ from baybe_mcp.resources import register_builder  # noqa: E402
 register_builder("types", _build_types)
 register_builder("schema", _build_schema)
 register_builder("docs", _build_docs)
-register_builder("guide", _build_guide)
-register_builder("examples", _build_examples)
+register_builder("recipes", _build_recipes)
+register_builder("concepts", _build_concepts)
 
 
 # ---------------------------------------------------------------------------
@@ -839,27 +961,28 @@ def _ensure_resources(args) -> None:
     logger = logging.getLogger(__name__)
     cache_dir = resolve_cache_dir(args.cache_dir)
 
-    global _CACHE_DIR
+    global _CACHE_DIR, _RECIPES_DIR
     _CACHE_DIR = args.cache_dir
+    _RECIPES_DIR = args.recipes_dir
 
     if args.rebuild_resources:
-        build_resources(cache_dir=cache_dir)
+        build_resources(cache_dir=cache_dir, recipes_dir=args.recipes_dir)
         return
 
-    if is_cache_valid(cache_dir):
+    if is_cache_valid(cache_dir, recipes_dir=args.recipes_dir):
         logger.info("Using cached resources at %s", cache_dir)
         return
 
     if args.use_cache:
         raise SystemExit(
             f"No valid resource cache at {cache_dir} (built for a different "
-            "BayBE version or format). Run the 'build' command first, or drop "
-            "--use-cache to allow rebuilding."
+            "BayBE version, format, or set of user recipes). Run the 'build' "
+            "command first, or drop --use-cache to allow rebuilding."
         )
 
     if is_online():
         logger.info("Resource cache stale/missing; rebuilding.")
-        build_resources(cache_dir=cache_dir)
+        build_resources(cache_dir=cache_dir, recipes_dir=args.recipes_dir)
     else:
         logger.warning(
             "Resource cache stale/missing and no network available; serving "
@@ -886,7 +1009,7 @@ def _build(args) -> None:
     from baybe_mcp.resources import build_resources
 
     logging.basicConfig(level=args.log_level)
-    build_resources(cache_dir=args.cache_dir)
+    build_resources(cache_dir=args.cache_dir, recipes_dir=args.recipes_dir)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -930,6 +1053,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Cache directory (default: .baybe_mcp_cache in the current dir).",
     )
     run_parser.add_argument(
+        "--recipes-dir",
+        default=None,
+        help="Directory of user-provided .md recipes (default: recipes/).",
+    )
+    run_parser.add_argument(
         "--rebuild-resources",
         action="store_true",
         help="Rebuild the resource cache before serving.",
@@ -947,6 +1075,11 @@ def main(argv: list[str] | None = None) -> None:
         "--cache-dir",
         default=None,
         help="Cache directory (default: .baybe_mcp_cache in the current dir).",
+    )
+    build_parser.add_argument(
+        "--recipes-dir",
+        default=None,
+        help="Directory of user-provided .md recipes (default: recipes/).",
     )
     build_parser.add_argument(
         "--log-level",

@@ -1,94 +1,44 @@
 # baybe-mcp
 
-MCP server that exposes [BayBE](https://github.com/emdgroup/baybe)'s Bayesian optimization as tools for AI agents.
+MCP server that exposes [BayBE](https://github.com/emdgroup/baybe)'s Bayesian
+optimization to AI agents. It offers stateless tools for recommendations,
+predictions, and parameter importance, plus resources that teach an agent how to
+build valid BayBE configurations for the installed BayBE version.
 
-## Setup
+## Design Principles
+
+- **Stateless.** No Campaign or server-side state is kept. Every tool call
+  carries its full context (search space, objective, measurements).
+- **Version-derived.** Types and schemata are introspected from the installed
+  `baybe` package; concepts and recipes are fetched from the BayBE repository at
+  the matching version tag. Nothing is hardcoded or shipped prebuilt.
+- **Tool/resource parity.** All resource content is also exposed as tools (some
+  clients surface only tools), and both delegate to the same code so they cannot
+  drift.
+- **Offline-capable.** Fetched content is stored in a version-guarded cache that
+  can be built once and copied to an offline machine.
+- **Guided workflow.** The server publishes an agent workflow: study concepts
+  and recipes, learn serialization, study schemata, `validate`, then act.
+- **Custom recipes.** Users can add their own `.md` recipes that are merged
+  alongside the documentation-derived ones.
+
+## Local Install
 
 Requires Python >= 3.10 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
+git clone https://github.com/emdgroup/baybe-mcp.git
+cd baybe-mcp
 uv sync
 ```
 
-BayBE is required at `baybe[chem,insights]>=0.15` in `pyproject.toml` (the `chem` and `insights` extras enable substance parameters and SHAP-based insights), and the fully resolved dependency set is committed in `uv.lock`.
+BayBE is required at `baybe[chem,insights]>=0.15` (the `chem` and `insights`
+extras enable substance parameters and SHAP-based insights). `uv.lock` pins the
+exact resolved dependency set.
 
-### Checking installed versions
+### OpenCode
 
-Any user can inspect which versions are actually installed:
-
-```bash
-uv run python -c "import baybe; print(baybe.__version__)"  # BayBE version
-uv pip show baybe mcp                                      # specific packages
-uv pip list                                                # all installed packages
-```
-
-`uv.lock` is the source of truth for the exact resolved versions of all dependencies.
-
-## Building resources
-
-The server exposes resources (types, schemas, a serialization guide, examples)
-that are derived from the installed BayBE version. They are stored in a cache
-directory so the server starts fast and can run offline.
-
-```bash
-uv run python -m baybe_mcp.server build
-```
-
-This writes `.baybe_mcp_cache/` in the current directory. Building is optional:
-the server auto-builds on first start when the cache is missing/stale and the
-network is reachable. Use `--cache-dir` to change the location.
-
-Because everything is derived from the installed BayBE version, you only ever
-need to choose the BayBE version. The cache is version-guarded, so it can be
-built on one machine and copied to another (e.g. one without internet):
-
-```bash
-# machine with internet:
-uv run python -m baybe_mcp.server build --cache-dir /path/to/cache
-# copy the cache folder to the offline machine, then:
-uv run python -m baybe_mcp.server run --use-cache --cache-dir /path/to/cache
-```
-
-## Running the server
-
-The server supports two transports. Run `run --help` to see all options
-(`--transport`, `--host`, `--port`, `--log-level`, `--cache-dir`,
-`--rebuild-resources`, `--use-cache`).
-
-### stdio (local)
-
-The MCP client spawns the server as a subprocess and talks over stdin/stdout:
-
-```bash
-uv run python -m baybe_mcp.server run
-```
-
-### HTTP (remote)
-
-The server runs as a persistent process and clients connect by URL. This is the
-mode used for hosting the server remotely:
-
-```bash
-uv run python -m baybe_mcp.server run --transport streamable-http
-```
-
-This serves the MCP endpoint at `http://127.0.0.1:8000/mcp`. Use `--host` /
-`--port` to change the bind address, and `--log-level DEBUG` to see request and
-tool traffic while debugging.
-
-Notes:
-- In production, only the URL changes (e.g. `https://your-host.example.com/mcp`);
-  you would additionally add TLS and authentication.
-- Binding beyond localhost triggers the SDK's DNS-rebinding protection, which
-  rejects unknown hosts by default.
-- A running HTTP server must be **restarted** to pick up code changes.
-
-## Connecting from OpenCode
-
-Add the server to your OpenCode config (global `~/.config/opencode/opencode.json`
-or a project-level `opencode.json`).
-
-### stdio
+Add to `~/.config/opencode/opencode.json` (or a project-level `opencode.json`):
 
 ```jsonc
 {
@@ -98,187 +48,136 @@ or a project-level `opencode.json`).
       "type": "local",
       "command": ["uv", "run", "--directory", "/absolute/path/to/baybe-mcp", "python", "-m", "baybe_mcp.server", "run"],
       "enabled": true,
-      "timeout": 30000
+      "timeout": 600000
     }
   }
 }
 ```
 
-The raised `timeout` accounts for the slow initial import of BayBE and PyTorch,
-which exceeds OpenCode's 5000ms default.
+The timeout is set to 10 minutes. It covers the slow initial import of BayBE and
+PyTorch, but recommendation calls themselves can take much longer, so you may
+need to increase this value significantly.
 
-### HTTP (remote)
+### Claude Desktop
 
-Start the server in HTTP mode first, then point OpenCode at its URL:
+Add to `claude_desktop_config.json`:
 
 ```jsonc
 {
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
+  "mcpServers": {
     "baybe": {
-      "type": "remote",
-      "url": "http://127.0.0.1:8000/mcp",
-      "enabled": true
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/baybe-mcp", "python", "-m", "baybe_mcp.server", "run"]
     }
   }
 }
 ```
 
-Once connected, the `baybe` tools are available to the agent alongside its
-built-in tools.
+### Claude Code
 
-## Tools
+Register the server with the CLI (use `--scope user` to make it available across
+all projects instead of just the current one):
 
-**Recommended workflow:** discover types with `list_types`, read a type's
-`get_schema` (consult `get_serialization_guide` and `list_examples` /
-`get_example` for patterns), build the config, confirm it with `validate`, then
-call `recommend` (or `predict` for posterior statistics, or
-`parameter_importance` for SHAP-based parameter importance).
-
-### `validate`
-
-Validates a JSON configuration for any BayBE object. Useful for agents to check their configs before passing them to `recommend`.
-
-**Input:**
-- `json_config` (JSON object or string): a config with a `"type"` field identifying the concrete BayBE class.
-
-**Returns:** JSON with `"valid"` (bool) and `"message"` (string).
-
-**Example:**
-```json
-{
-  "type": "NumericalDiscreteParameter",
-  "name": "temperature",
-  "values": [100.0, 150.0, 200.0]
-}
+```bash
+claude mcp add baybe -- uv run --directory /absolute/path/to/baybe-mcp python -m baybe_mcp.server run
 ```
 
-### `recommend`
+Recommendation calls can take a long time. Raise Claude Code's per-tool timeout
+via the `MCP_TOOL_TIMEOUT` environment variable (milliseconds), e.g.
+`MCP_TOOL_TIMEOUT=600000 claude` for 10 minutes, and increase it significantly
+if needed.
 
-Performs a stateless Bayesian optimization recommendation. No Campaign or server-side state -- all context is passed per call.
+## Remote Install
 
-Config and measurement inputs accept either a JSON object/array or a JSON
-string; both are handled transparently (some MCP clients auto-deserialize valid
-JSON arguments).
+Run the server as a persistent process; clients connect by URL:
 
-**Inputs:**
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `batch_size` | int | yes | Number of experiments to recommend |
-| `searchspace_json` | string | yes | JSON-serialized [SearchSpace](https://emdgroup.github.io/baybe/stable/userguide/searchspace.html) |
-| `objective_json` | string | yes | JSON-serialized [Objective](https://emdgroup.github.io/baybe/stable/userguide/objectives.html) |
-| `measurements_json` | string | no | Past measurements as a DataFrame (see formats below) |
-| `recommender_json` | string | no | Recommender config. Default: `TwoPhaseMetaRecommender` |
-| `pending_experiments_json` | string | no | Pending experiments DataFrame |
-| `output_format` | string | no | `"records"` (default) or `"base64"` |
-
-**Returns:** JSON-serialized DataFrame of recommended experiments.
-
-**Example searchspace:**
-```json
-{
-  "type": "SearchSpace",
-  "constructor": "from_product",
-  "parameters": [
-    {"type": "NumericalDiscreteParameter", "name": "x1", "values": [1.0, 2.0, 3.0]},
-    {"type": "NumericalDiscreteParameter", "name": "x2", "values": [10.0, 20.0, 30.0]}
-  ]
-}
+```bash
+uv run python -m baybe_mcp.server run --transport streamable-http
 ```
 
-**Example objective:**
-```json
-{
-  "type": "SingleTargetObjective",
-  "target": {
-    "type": "NumericalTarget",
-    "name": "y",
-    "transformation": {"type": "IdentityTransformation"},
-    "minimize": false
-  }
-}
+This serves the MCP endpoint at `http://127.0.0.1:8000/mcp`. Use `--host` /
+`--port` to change the bind address. In production, add TLS and authentication
+and use the public URL. A running HTTP server must be restarted to pick up code
+changes.
+
+Point clients at the URL:
+
+```jsonc
+// OpenCode
+{ "mcp": { "baybe": { "type": "remote", "url": "http://127.0.0.1:8000/mcp", "enabled": true } } }
 ```
 
-### `predict`
+```jsonc
+// Claude Desktop
+{ "mcpServers": { "baybe": { "url": "http://127.0.0.1:8000/mcp" } } }
+```
 
-Returns posterior statistics (predictions and uncertainty) for candidate points. Fits a surrogate on the provided measurements, then computes the requested statistics -- stateless, no Campaign or server-side state.
+```bash
+# Claude Code
+claude mcp add --transport http baybe http://127.0.0.1:8000/mcp
+```
 
-Config, candidate, and measurement inputs accept either a JSON object/array or a
-JSON string; both are handled transparently.
+## Resources, Caching, Custom Recipes
 
-**Inputs:**
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `searchspace_json` | string | yes | JSON-serialized [SearchSpace](https://emdgroup.github.io/baybe/stable/userguide/searchspace.html) |
-| `objective_json` | string | yes | JSON-serialized [Objective](https://emdgroup.github.io/baybe/stable/userguide/objectives.html) |
-| `candidates_json` | string | yes | Candidate points as a DataFrame (parameter columns only; same formats as measurements) |
-| `measurements_json` | string | yes | Past measurements used to train the surrogate (same formats below) |
-| `stats` | array or string | no | Statistics to compute: `"mean"`, `"std"`, `"var"`, `"mode"`, and floats in `(0, 1)` for quantiles. Default: `["mean", "std"]` |
-| `surrogate_json` | string | no | Surrogate config. Default: `GaussianProcessSurrogate` |
-| `output_format` | string | no | `"records"` (default) or `"base64"` |
+The server exposes resources (types, schemata, concepts, recipes, doc links)
+derived from the installed BayBE version. Fetched content is stored in a cache
+so the server starts fast and can run offline:
 
-**Returns:** JSON-serialized DataFrame of posterior statistics per candidate (columns like `"<target>_mean"`, `"<target>_std"`, `"<target>_Q_0.05"`).
+```bash
+uv run python -m baybe_mcp.server build          # build the cache and exit
+uv run python -m baybe_mcp.server run            # auto-builds if missing/stale
+```
 
-### `parameter_importance`
+Building writes `.baybe_mcp_cache/` in the current directory (override with
+`--cache-dir`). The cache is guarded by the BayBE version, a resource format
+version, and a hash of the recipes directory, so it is rebuilt automatically
+when any of these change. Because it is portable, it can be built on a networked
+machine and copied to an offline one:
 
-Returns [SHAP](https://shap.readthedocs.io/)-based parameter importance for each target. Fits a surrogate on the provided measurements, then attributes the model output to each search space parameter -- stateless, no Campaign. Importance is the mean absolute SHAP value of a parameter over the measurements.
+```bash
+# online machine:
+uv run python -m baybe_mcp.server build --cache-dir /path/to/cache
+# copy the cache folder to the offline machine, then:
+uv run python -m baybe_mcp.server run --use-cache --cache-dir /path/to/cache
+```
 
-Config and measurement inputs accept either a JSON object/array or a JSON
-string; both are handled transparently.
+**Custom recipes.** Drop your own `.md` files into a recipes directory
+(default `recipes/`, override with `--recipes-dir`). Files in subfolders use the
+subfolder name as their topic; top-level files are grouped under
+`Custom_Recipes`. They appear in `list_recipes` / `baybe://recipes` tagged with
+`source: user` and are baked into the cache at build time.
 
-**Inputs:**
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `searchspace_json` | string | yes | JSON-serialized [SearchSpace](https://emdgroup.github.io/baybe/stable/userguide/searchspace.html) |
-| `objective_json` | string | yes | JSON-serialized [Objective](https://emdgroup.github.io/baybe/stable/userguide/objectives.html) |
-| `measurements_json` | string | yes | Measurements used to train the surrogate and as SHAP background data |
-| `surrogate_json` | string | no | Surrogate config. Default: `GaussianProcessSurrogate` |
-| `explainer` | string | no | SHAP explainer class name. Default: `KernelExplainer` |
-| `use_comp_rep` | bool | no | Explain the computational representation (default `false`) |
-| `output_format` | string | no | `"records"` (default) or `"base64"` |
+## Tools & Resources
 
-The valid `explainer` values (and the rule that only `KernelExplainer` handles categorical parameters unless `use_comp_rep` is set) are listed in the tool description and via `get_schema("SHAPInsight")`, both derived from the installed BayBE version.
+**Action tools** (all stateless; config/dataframe arguments accept a JSON
+object/array or a JSON string):
 
-**Returns:** JSON-serialized DataFrame with one row per parameter: a `"parameter"` column plus one `"<target>_importance"` column per target.
+| Tool | Purpose | Key parameters |
+|------|---------|----------------|
+| `validate` | Validate a config for any BayBE object | `json_config` |
+| `recommend` | Bayesian optimization recommendations (central tool) | `batch_size`, `searchspace_json`, `objective_json`, `measurements_json?`, `recommender_json?`, `pending_experiments_json?`, `output_format?` |
+| `predict` | Posterior statistics for candidates | `searchspace_json`, `objective_json`, `candidates_json`, `measurements_json`, `stats?`, `surrogate_json?`, `output_format?` |
+| `parameter_importance` | SHAP-based parameter importance per target | `searchspace_json`, `objective_json`, `measurements_json`, `surrogate_json?`, `explainer?`, `use_comp_rep?`, `output_format?` |
 
-## Config-knowledge tools
+**Knowledge tools** (version-derived), each mirrored by a resource:
 
-These tools help agents build valid configs. All content is derived from the
-installed BayBE version.
+| Tool | Resource | Purpose |
+|------|----------|---------|
+| `list_types` | `baybe://types` | Serializable types grouped by family, with schema references |
+| `get_schema` | `baybe://schema/{type}` | Fields, `from_*` constructors, docstring; nested `$ref`s |
+| `list_concepts` | `baybe://concepts` | Index of concept explanation pages |
+| `get_concept` | `baybe://concepts/{name}` | A concept page (e.g. `serialization`, `transfer_learning`) |
+| `list_recipes` | `baybe://recipes` | Worked scenarios by topic (incl. custom recipes) |
+| `get_recipe` | `baybe://recipes/{topic}/{file}` | A single recipe file |
+| `get_docs_links` | `baybe://docs` | Version-matched documentation links |
 
-| Tool | Description |
-|------|-------------|
-| `list_types` | All serializable BayBE types, grouped by family, each with its schema reference. |
-| `get_schema` | Fields (name, type, default, required), alternative `from_*` constructors, and docstring for a type. Nested objects carry a `$ref` to their own schema. |
-| `get_serialization_guide` | The BayBE serialization guide for the installed version (fetched; links out when offline). |
-| `list_examples` | Index of BayBE example scenarios (topics and files). |
-| `get_example` | Raw content of a single example scenario file. |
-| `get_docs_links` | Version-matched links to the BayBE documentation. |
+**DataFrame formats** (measurements, candidates, pending experiments):
 
-## Resources
-
-The same content is also exposed as MCP resources, for clients that surface
-resources to the agent (some clients, such as OpenCode, expose only tools —
-use the tools above with those).
-
-| URI | Equivalent tool |
-|-----|-----------------|
-| `baybe://types` | `list_types` |
-| `baybe://schema/{type}` | `get_schema` |
-| `baybe://guide/serialization` | `get_serialization_guide` |
-| `baybe://examples` | `list_examples` |
-| `baybe://examples/{topic}/{file}` | `get_example` |
-| `baybe://docs` | `get_docs_links` |
-
-## DataFrame Formats
-
-Measurements and pending experiments accept three formats:
-
-- **records** (agent-friendly): `[{"x1": 1.0, "x2": 10.0, "y": 0.5}, ...]`
-- **base64**: BayBE's native base64-encoded pickle string (from `converter.unstructure(df)`)
+- **records**: `[{"x1": 1.0, "x2": 10.0, "y": 0.5}, ...]`
+- **base64**: BayBE's native base64-encoded pickle string
 - **constructor dict**: `{"constructor": "from_records", "data": [...]}`
 
-Output can be `"records"` (list of dicts) or `"base64"`.
+Output is `"records"` (default) or `"base64"`.
 
 ## Tests
 
@@ -286,9 +185,3 @@ Output can be `"records"` (list of dicts) or `"base64"`.
 uv sync --extra test
 uv run pytest
 ```
-
-## References
-
-- [BayBE documentation](https://emdgroup.github.io/baybe/stable/)
-- [BayBE serialization guide](https://emdgroup.github.io/baybe/stable/userguide/serialization.html)
-- [Stateless recommend call](https://emdgroup.github.io/baybe/stable/userguide/getting_recommendations.html#the-recommend-call)

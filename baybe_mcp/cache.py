@@ -18,9 +18,10 @@ logger = logging.getLogger(__name__)
 
 # Bump whenever the structure of any built resource changes, so that caches
 # produced by older code are rebuilt even if the BayBE version is unchanged.
-RESOURCE_FORMAT_VERSION = 1
+RESOURCE_FORMAT_VERSION = 2
 
 DEFAULT_CACHE_DIR = ".baybe_mcp_cache"
+DEFAULT_RECIPES_DIR = "recipes"
 MANIFEST_NAME = "manifest.json"
 
 
@@ -31,18 +32,51 @@ def resolve_cache_dir(cache_dir: str | Path | None = None) -> Path:
     return Path(cache_dir)
 
 
+def resolve_recipes_dir(recipes_dir: str | Path | None = None) -> Path:
+    """Resolve the user recipes directory, defaulting to a relative dir."""
+    if recipes_dir is None:
+        return Path(DEFAULT_RECIPES_DIR)
+    return Path(recipes_dir)
+
+
+def recipes_hash(recipes_dir: str | Path | None = None) -> str:
+    """Return a stable hash of the user recipes directory.
+
+    Hashes the relative paths and contents of all ``.md`` files so the cache is
+    rebuilt whenever a user recipe is added, removed, or edited. An absent or
+    empty directory hashes to a constant sentinel.
+    """
+    import hashlib
+
+    directory = resolve_recipes_dir(recipes_dir)
+    hasher = hashlib.sha256()
+    if directory.is_dir():
+        for path in sorted(directory.rglob("*.md")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(directory).as_posix()
+            hasher.update(rel.encode("utf-8"))
+            hasher.update(b"\0")
+            hasher.update(path.read_bytes())
+            hasher.update(b"\0")
+    return hasher.hexdigest()
+
+
 def manifest_path(cache_dir: Path) -> Path:
     """Return the path to the manifest file within the cache directory."""
     return cache_dir / MANIFEST_NAME
 
 
-def write_manifest(cache_dir: Path, baybe_version: str | None) -> dict:
+def write_manifest(
+    cache_dir: Path, baybe_version: str | None, recipes_digest: str | None = None
+) -> dict:
     """Write the cache manifest and return its contents."""
     import time
 
     manifest = {
         "baybe_version": baybe_version,
         "resource_format_version": RESOURCE_FORMAT_VERSION,
+        "recipes_hash": recipes_digest,
         "built_at": time.time(),
     }
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -61,11 +95,17 @@ def read_manifest(cache_dir: Path) -> dict | None:
         return None
 
 
-def is_cache_valid(cache_dir: Path, baybe_version: str | None = None) -> bool:
-    """Return True if the cache matches the installed version and format.
+def is_cache_valid(
+    cache_dir: Path,
+    baybe_version: str | None = None,
+    recipes_dir: str | Path | None = None,
+) -> bool:
+    """Return True if the cache matches the installed version, format, recipes.
 
-    The cache is valid only when the manifest's BayBE version and resource
-    format version both match the current environment.
+    The cache is valid only when the manifest's BayBE version, resource format
+    version, and user-recipes hash all match the current environment. The
+    recipes hash guard ensures added/edited/removed user recipes trigger a
+    rebuild.
     """
     if baybe_version is None:
         baybe_version = get_baybe_version()
@@ -75,4 +115,5 @@ def is_cache_valid(cache_dir: Path, baybe_version: str | None = None) -> bool:
     return (
         manifest.get("baybe_version") == baybe_version
         and manifest.get("resource_format_version") == RESOURCE_FORMAT_VERSION
+        and manifest.get("recipes_hash") == recipes_hash(recipes_dir)
     )

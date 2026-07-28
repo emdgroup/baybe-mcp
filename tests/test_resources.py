@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from baybe_mcp import cache, examples, guide, introspect, version
+from baybe_mcp import cache, introspect, recipes, version
 
 
 # ---------------------------------------------------------------------------
@@ -38,12 +38,31 @@ class TestCache:
         assert cache.is_cache_valid(tmp_path) is False
 
     def test_cache_valid_after_matching_build(self, tmp_path):
-        cache.write_manifest(tmp_path, version.get_baybe_version())
-        assert cache.is_cache_valid(tmp_path) is True
+        recipes_dir = tmp_path / "recipes"
+        cache.write_manifest(
+            tmp_path,
+            version.get_baybe_version(),
+            cache.recipes_hash(recipes_dir),
+        )
+        assert cache.is_cache_valid(tmp_path, recipes_dir=recipes_dir) is True
 
     def test_cache_invalid_on_version_mismatch(self, tmp_path):
         cache.write_manifest(tmp_path, "0.0.0-not-installed")
         assert cache.is_cache_valid(tmp_path) is False
+
+    def test_cache_invalid_on_recipes_change(self, tmp_path):
+        recipes_dir = tmp_path / "recipes"
+        recipes_dir.mkdir()
+        (recipes_dir / "a.md").write_text("# A")
+        cache.write_manifest(
+            tmp_path,
+            version.get_baybe_version(),
+            cache.recipes_hash(recipes_dir),
+        )
+        assert cache.is_cache_valid(tmp_path, recipes_dir=recipes_dir) is True
+        # Editing a recipe invalidates the cache.
+        (recipes_dir / "a.md").write_text("# A changed")
+        assert cache.is_cache_valid(tmp_path, recipes_dir=recipes_dir) is False
 
 
 # ---------------------------------------------------------------------------
@@ -74,24 +93,11 @@ class TestIntrospection:
 
 
 # ---------------------------------------------------------------------------
-# guide + examples (network mocked)
+# recipes (network mocked)
 # ---------------------------------------------------------------------------
 
 
-class TestGuide:
-    def test_guide_success(self, monkeypatch):
-        monkeypatch.setattr(guide, "fetch_text", lambda *a, **k: "# Serialization\n...")
-        result = guide.build_guide()
-        assert result["content"].startswith("# Serialization")
-
-    def test_guide_offline_fallback(self, monkeypatch):
-        monkeypatch.setattr(guide, "fetch_text", lambda *a, **k: None)
-        result = guide.build_guide()
-        assert "content" not in result
-        assert "link" in result
-
-
-class TestExamples:
+class TestRecipes:
     def test_index_success(self, monkeypatch):
         def fake_fetch(url, timeout=10.0):
             if url.endswith("examples?ref=" + (version.get_baybe_version() or "")):
@@ -100,13 +106,32 @@ class TestExamples:
                 return json.dumps([{"name": "start.py", "type": "file"}])
             return None
 
-        monkeypatch.setattr(examples, "fetch_text", fake_fetch)
-        idx = examples.build_examples_index()
+        monkeypatch.setattr(recipes, "fetch_text", fake_fetch)
+        idx = recipes.build_recipes_index()
         assert "Basics" in idx["topics"]
         assert idx["topics"]["Basics"][0]["file"] == "start.py"
+        assert idx["topics"]["Basics"][0]["source"] == "docs"
 
     def test_index_offline_fallback(self, monkeypatch):
-        monkeypatch.setattr(examples, "fetch_text", lambda *a, **k: None)
-        idx = examples.build_examples_index()
+        monkeypatch.setattr(recipes, "fetch_text", lambda *a, **k: None)
+        idx = recipes.build_recipes_index()
         assert idx["topics"] == {}
         assert "link" in idx
+
+    def test_user_recipes_merged(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(recipes, "fetch_text", lambda *a, **k: None)
+        recipes_dir = tmp_path / "recipes"
+        (recipes_dir / "Nested").mkdir(parents=True)
+        (recipes_dir / "top.md").write_text("# Top")
+        (recipes_dir / "Nested" / "inner.md").write_text("# Inner")
+
+        idx = recipes.build_recipes_index(recipes_dir)
+        # Top-level files go under Custom_Recipes; subfolders become topics.
+        assert idx["topics"]["Custom_Recipes"][0]["file"] == "top.md"
+        assert idx["topics"]["Custom_Recipes"][0]["source"] == "user"
+        assert idx["topics"]["Nested"][0]["file"] == "inner.md"
+
+    def test_user_recipes_absent_dir(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(recipes, "fetch_text", lambda *a, **k: None)
+        idx = recipes.build_recipes_index(tmp_path / "does_not_exist")
+        assert idx["topics"] == {}

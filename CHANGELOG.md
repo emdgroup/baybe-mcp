@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-28
+### Added
+- `concepts` resource and tools (`list_concepts`, `get_concept`) exposing
+  BayBE's concept explanation pages for the installed version.
+- User-provided recipes: `.md` files in a recipes directory (`--recipes-dir`,
+  default `recipes/`) are merged into the recipes index and served alongside the
+  documentation-derived ones.
+- Agent workflow guidance published as server instructions and reinforced in the
+  `recommend` tool.
+
+### Changed
+- Renamed the `examples` resource and tools to `recipes`
+  (`baybe://recipes`, `list_recipes`, `get_recipe`).
+- The serialization guide is now served as a concept
+  (`get_concept("serialization")`); the dedicated guide tool was removed.
+
 ## [0.4.0] - 2026-07-28
 ### Added
 - `parameter_importance` tool: stateless SHAP-based parameter importance per

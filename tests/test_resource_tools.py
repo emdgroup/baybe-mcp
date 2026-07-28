@@ -22,17 +22,25 @@ class TestToolResourceParity:
     def test_get_docs_links_matches_resource(self):
         assert server.get_docs_links() == server.docs_resource()
 
-    def test_get_serialization_guide_matches_resource(self, monkeypatch):
-        import baybe_mcp.guide as guide
+    def test_list_concepts_matches_resource(self, monkeypatch):
+        import baybe_mcp.concepts as concepts
 
-        monkeypatch.setattr(guide, "fetch_text", lambda *a, **k: "# Guide")
-        assert server.get_serialization_guide() == server.serialization_guide_resource()
+        monkeypatch.setattr(concepts, "fetch_text", lambda *a, **k: None)
+        assert server.list_concepts() == server.concepts_index_resource()
 
-    def test_list_examples_matches_resource(self, monkeypatch):
-        import baybe_mcp.examples as examples
+    def test_list_recipes_matches_resource(self, monkeypatch):
+        import baybe_mcp.recipes as recipes
 
-        monkeypatch.setattr(examples, "fetch_text", lambda *a, **k: None)
-        assert server.list_examples() == server.examples_index_resource()
+        monkeypatch.setattr(recipes, "fetch_text", lambda *a, **k: None)
+        assert server.list_recipes() == server.recipes_index_resource()
+
+
+def test_server_exposes_workflow_instructions():
+    """The server publishes workflow guidance mentioning the key steps."""
+    instructions = server.mcp._mcp_server.instructions
+    assert instructions
+    for keyword in ("validate", "recommend", "concept", "schema", "serialization"):
+        assert keyword in instructions
 
 
 class TestResourceToolsContent:
@@ -40,10 +48,20 @@ class TestResourceToolsContent:
         result = json.loads(server.get_schema("NoSuchType"))
         assert "error" in result
 
-    def test_get_example_offline(self, monkeypatch, tmp_path):
-        import baybe_mcp.examples as examples
+    def test_get_recipe_offline(self, monkeypatch, tmp_path):
+        import baybe_mcp.recipes as recipes
 
         monkeypatch.setattr(server, "_CACHE_DIR", str(tmp_path))
-        monkeypatch.setattr(examples, "fetch_text", lambda *a, **k: None)
-        result = json.loads(server.get_example("Serialization", "validate_config.py"))
+        monkeypatch.setattr(server, "_RECIPES_DIR", str(tmp_path / "recipes"))
+        monkeypatch.setattr(recipes, "fetch_text", lambda *a, **k: None)
+        result = json.loads(server.get_recipe("Serialization", "validate_config.py"))
         assert "error" in result
+
+    def test_get_recipe_user(self, monkeypatch, tmp_path):
+        recipes_dir = tmp_path / "recipes"
+        recipes_dir.mkdir()
+        (recipes_dir / "howto.md").write_text("# How To")
+
+        monkeypatch.setattr(server, "_CACHE_DIR", str(tmp_path / "cache"))
+        monkeypatch.setattr(server, "_RECIPES_DIR", str(recipes_dir))
+        assert server.get_recipe("Custom_Recipes", "howto.md") == "# How To"
