@@ -35,6 +35,14 @@ class TestToolResourceParity:
         assert server.list_recipes() == server.recipes_index_resource()
 
 
+def test_server_exposes_workflow_instructions():
+    """The server publishes workflow guidance mentioning the key steps."""
+    instructions = server.mcp._mcp_server.instructions
+    assert instructions
+    for keyword in ("validate", "recommend", "concept", "schema", "serialization"):
+        assert keyword in instructions
+
+
 class TestResourceToolsContent:
     def test_get_schema_unknown_type(self):
         result = json.loads(server.get_schema("NoSuchType"))

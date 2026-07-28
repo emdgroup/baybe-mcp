@@ -136,7 +136,27 @@ def _prepare_surrogate(surrogate: Any, objective: Any) -> Any:
 # MCP Server
 # ---------------------------------------------------------------------------
 
-mcp = FastMCP("baybe-mcp")
+_WORKFLOW = """\
+BayBE MCP workflow for modelling and optimizing an experimental campaign:
+
+1. Understand the goal. Study the relevant concepts (`list_concepts`,
+   `get_concept`) and worked recipes (`list_recipes`, `get_recipe`) to decide
+   how to model the user's project: parameters, objective, constraints, and
+   recommender.
+2. Learn serialization. Read `get_concept("serialization")` to understand how
+   BayBE objects are represented as JSON (types, constructors, shortcuts).
+3. Discover and study schemata. Use `list_types`, then `get_schema` for each
+   object you will build.
+4. Build the JSON configs, then `validate` each one before use.
+5. Act: `recommend` proposes the next experiments (the central tool); `predict`
+   returns posterior statistics; `parameter_importance` returns SHAP-based
+   parameter importance.
+
+The server is stateless: every call must carry full context (search space,
+objective, measurements). Nothing persists server-side.
+"""
+
+mcp = FastMCP("baybe-mcp", instructions=_WORKFLOW)
 
 
 # ---------------------------------------------------------------------------
@@ -504,13 +524,20 @@ def recommend(
 ) -> str:
     """Get stateless Bayesian optimization recommendations.
 
-    Performs a single recommendation step without maintaining any server-side
-    state (no Campaign object). All context must be passed explicitly.
+    This is the central tool. It performs a single recommendation step without
+    maintaining any server-side state (no Campaign object); all context must be
+    passed explicitly.
 
-    Before calling this, build each config using `get_schema` (and
-    `get_concept` / `get_recipe` for patterns), then confirm each
-    with `validate`. If this returns an {"error": ...}, re-check the offending
-    config with `validate` or `get_schema` and retry.
+    Recommended workflow before calling this:
+    1. Understand the goal: study `list_concepts` / `get_concept` and
+       `list_recipes` / `get_recipe` to decide how to model the project
+       (parameters, objective, constraints, recommender).
+    2. Learn serialization: read `get_concept("serialization")` for how objects
+       are represented as JSON.
+    3. Study schemata: `list_types`, then `get_schema` for each object you build.
+    4. Build the configs, then confirm each with `validate`.
+    5. Call this tool. If it returns an {"error": ...}, re-check the offending
+       config with `validate` or `get_schema` and retry.
 
     Config and measurement arguments accept either a JSON object/array or a
     JSON string; both forms are handled transparently.
