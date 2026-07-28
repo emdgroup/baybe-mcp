@@ -10,7 +10,7 @@ Requires Python >= 3.10 and [uv](https://docs.astral.sh/uv/).
 uv sync
 ```
 
-BayBE is pinned to an exact version (`baybe==0.15.0`) in `pyproject.toml`, and the fully resolved dependency set is committed in `uv.lock`.
+BayBE is required at `baybe[chem,insights]>=0.15` in `pyproject.toml` (the `chem` and `insights` extras enable substance parameters and SHAP-based insights), and the fully resolved dependency set is committed in `uv.lock`.
 
 ### Checking installed versions
 
@@ -132,7 +132,8 @@ built-in tools.
 **Recommended workflow:** discover types with `list_types`, read a type's
 `get_schema` (consult `get_serialization_guide` and `list_examples` /
 `get_example` for patterns), build the config, confirm it with `validate`, then
-call `recommend` (or `predict` for posterior statistics).
+call `recommend` (or `predict` for posterior statistics, or
+`parameter_importance` for SHAP-based parameter importance).
 
 ### `validate`
 
@@ -217,6 +218,26 @@ JSON string; both are handled transparently.
 | `output_format` | string | no | `"records"` (default) or `"base64"` |
 
 **Returns:** JSON-serialized DataFrame of posterior statistics per candidate (columns like `"<target>_mean"`, `"<target>_std"`, `"<target>_Q_0.05"`).
+
+### `parameter_importance`
+
+Returns [SHAP](https://shap.readthedocs.io/)-based parameter importance for each target. Fits a surrogate on the provided measurements, then attributes the model output to each search space parameter -- stateless, no Campaign. Importance is the mean absolute SHAP value of a parameter over the measurements.
+
+Config and measurement inputs accept either a JSON object/array or a JSON
+string; both are handled transparently.
+
+**Inputs:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `searchspace_json` | string | yes | JSON-serialized [SearchSpace](https://emdgroup.github.io/baybe/stable/userguide/searchspace.html) |
+| `objective_json` | string | yes | JSON-serialized [Objective](https://emdgroup.github.io/baybe/stable/userguide/objectives.html) |
+| `measurements_json` | string | yes | Measurements used to train the surrogate and as SHAP background data |
+| `surrogate_json` | string | no | Surrogate config. Default: `GaussianProcessSurrogate` |
+| `explainer` | string | no | SHAP explainer class name. Default: `KernelExplainer` |
+| `use_comp_rep` | bool | no | Explain the computational representation (default `false`) |
+| `output_format` | string | no | `"records"` (default) or `"base64"` |
+
+**Returns:** JSON-serialized DataFrame with one row per parameter: a `"parameter"` column plus one `"<target>_importance"` column per target.
 
 ## Config-knowledge tools
 
