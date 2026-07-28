@@ -183,9 +183,22 @@ def build_schema(type_name: str, name_to_class: dict[str, type] | None = None) -
             entry["$ref"] = ref
         fields[key] = entry
 
-    return {
+    schema = {
         "type": type_name,
         "doc": inspect.getdoc(cls),
         "fields": fields,
         "constructors": _alternative_constructors(cls),
     }
+
+    # SHAPInsight's `explainers` field holds explainer instances, not the string
+    # names callers pass to the parameter_importance tool. Surface the valid
+    # names explicitly, derived from the loaded BayBE version.
+    if type_name == "SHAPInsight":
+        try:
+            from baybe.insights.shap import EXPLAINERS
+
+            schema["valid_explainers"] = sorted(EXPLAINERS)
+        except Exception:
+            pass
+
+    return schema
