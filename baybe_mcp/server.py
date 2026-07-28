@@ -266,6 +266,39 @@ def _example_file_payload(topic: str, filename: str) -> str:
     return content
 
 
+def _concepts_index_payload() -> str:
+    """Concepts index, from cache if available, else computed live."""
+    cached = _read_cached_json("concepts_index.json")
+    if cached is not None:
+        return json.dumps(cached)
+
+    from baybe_mcp.concepts import build_concepts_index
+
+    return json.dumps(build_concepts_index())
+
+
+def _concept_payload(name: str) -> str:
+    """Raw content of a single concept page; fetched lazily and cached."""
+    from baybe_mcp.cache import resolve_cache_dir
+
+    cache_path = resolve_cache_dir(_CACHE_DIR) / f"concepts/{name}.md"
+    if cache_path.is_file():
+        return cache_path.read_text()
+
+    from baybe_mcp.concepts import fetch_concept
+
+    content = fetch_concept(name)
+    if content is None:
+        return json.dumps({"error": f"Could not fetch concept '{name}' (offline?)."})
+
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(content)
+    except OSError:
+        pass
+    return content
+
+
 # ---------------------------------------------------------------------------
 # Resources (delegate to payload helpers)
 # ---------------------------------------------------------------------------
@@ -360,6 +393,30 @@ def _build_examples(cache_dir) -> None:
 
     (cache_dir / "examples_index.json").write_text(
         json.dumps(build_examples_index(), indent=2)
+    )
+
+
+@mcp.resource("baybe://concepts")
+def concepts_index_resource() -> str:
+    """Return the index of BayBE concept explanation pages."""
+    return _concepts_index_payload()
+
+
+@mcp.resource("baybe://concepts/{name}")
+def concept_resource(name: str) -> str:
+    """Return the raw Markdown of a single BayBE concept page.
+
+    Fetched lazily and cached on first access.
+    """
+    return _concept_payload(name)
+
+
+def _build_concepts(cache_dir) -> None:
+    """Cache builder for the concepts index (pages fetched lazily)."""
+    from baybe_mcp.concepts import build_concepts_index
+
+    (cache_dir / "concepts_index.json").write_text(
+        json.dumps(build_concepts_index(), indent=2)
     )
 
 
@@ -793,11 +850,36 @@ def get_example(topic: str, filename: str) -> str:
 
 
 @mcp.tool()
+def list_concepts() -> str:
+    """List BayBE concept explanation pages.
+
+    Concepts explain how BayBE works (e.g. getting recommendations,
+    serialization, transfer learning, active learning). Study relevant concepts
+    before modelling a project. Fetch a page with `get_concept`.
+    """
+    return _concepts_index_payload()
+
+
+@mcp.tool()
+def get_concept(name: str) -> str:
+    """Get the raw Markdown of a single BayBE concept page.
+
+    Discover available pages with `list_concepts` first. Read
+    `get_concept("serialization")` to learn how objects are represented as JSON
+    before building configs.
+
+    Args:
+        name: The concept page name (e.g. "serialization", "transfer_learning").
+    """
+    return _concept_payload(name)
+
+
+@mcp.tool()
 def get_docs_links() -> str:
     """Get version-matched links to the BayBE documentation.
 
-    A fallback for deeper reference beyond what `get_schema`,
-    `get_serialization_guide`, and the example tools provide.
+    A fallback for deeper reference beyond what `get_schema`, the concept tools,
+    and the example tools provide.
     """
     return _docs_payload()
 
@@ -813,6 +895,7 @@ register_builder("schema", _build_schema)
 register_builder("docs", _build_docs)
 register_builder("guide", _build_guide)
 register_builder("examples", _build_examples)
+register_builder("concepts", _build_concepts)
 
 
 # ---------------------------------------------------------------------------
