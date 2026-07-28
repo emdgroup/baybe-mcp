@@ -12,7 +12,7 @@ from baybe.searchspace.core import SearchSpace
 from baybe.serialization.core import converter
 from baybe.targets.numerical import NumericalTarget
 
-from baybe_mcp.server import recommend, validate
+from baybe_mcp.server import predict, recommend, validate
 
 # ---------------------------------------------------------------------------
 # Fixtures: reusable serialized BayBE objects
@@ -196,3 +196,106 @@ class TestRecommend:
         )
         result = json.loads(result_str)
         assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# predict tool tests
+# ---------------------------------------------------------------------------
+
+MEASUREMENTS_JSON = json.dumps(
+    [
+        {"x1": 1.0, "x2": 10.0, "y": 0.5},
+        {"x1": 3.0, "x2": 20.0, "y": 0.8},
+        {"x1": 5.0, "x2": 30.0, "y": 0.2},
+    ]
+)
+
+CANDIDATES_JSON = json.dumps(
+    [
+        {"x1": 2.0, "x2": 10.0},
+        {"x1": 4.0, "x2": 30.0},
+    ]
+)
+
+
+class TestPredict:
+    def test_predict_mean_std(self):
+        """Default stats should yield mean and std columns per target."""
+        result_str = predict(
+            searchspace_json=SEARCHSPACE_JSON,
+            objective_json=OBJECTIVE_JSON,
+            candidates_json=CANDIDATES_JSON,
+            measurements_json=MEASUREMENTS_JSON,
+        )
+        result = json.loads(result_str)
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert "y_mean" in result[0]
+        assert "y_std" in result[0]
+
+    def test_predict_with_quantiles(self):
+        """Float stats should be computed as quantile columns."""
+        result_str = predict(
+            searchspace_json=SEARCHSPACE_JSON,
+            objective_json=OBJECTIVE_JSON,
+            candidates_json=CANDIDATES_JSON,
+            measurements_json=MEASUREMENTS_JSON,
+            stats=["mean", 0.05, 0.95],
+        )
+        result = json.loads(result_str)
+        assert isinstance(result, list)
+        assert "y_mean" in result[0]
+        assert "y_Q_0.05" in result[0]
+        assert "y_Q_0.95" in result[0]
+
+    def test_predict_requires_measurements(self):
+        """Empty measurements should return an error."""
+        result_str = predict(
+            searchspace_json=SEARCHSPACE_JSON,
+            objective_json=OBJECTIVE_JSON,
+            candidates_json=CANDIDATES_JSON,
+            measurements_json="[]",
+        )
+        result = json.loads(result_str)
+        assert "error" in result
+
+    def test_predict_output_base64(self):
+        """Output in base64 format should round-trip to a DataFrame."""
+        result_str = predict(
+            searchspace_json=SEARCHSPACE_JSON,
+            objective_json=OBJECTIVE_JSON,
+            candidates_json=CANDIDATES_JSON,
+            measurements_json=MEASUREMENTS_JSON,
+            output_format="base64",
+        )
+        result = json.loads(result_str)
+        assert isinstance(result, str)
+        df = converter.structure(result, pd.DataFrame)
+        assert len(df) == 2
+
+    def test_predict_custom_surrogate(self):
+        """A custom surrogate type should be accepted."""
+        result_str = predict(
+            searchspace_json=SEARCHSPACE_JSON,
+            objective_json=OBJECTIVE_JSON,
+            candidates_json=CANDIDATES_JSON,
+            measurements_json=MEASUREMENTS_JSON,
+            surrogate_json=json.dumps({"type": "RandomForestSurrogate"}),
+        )
+        result = json.loads(result_str)
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert "y_mean" in result[0]
+
+    def test_predict_unknown_surrogate(self):
+        """An unknown surrogate type should return an error."""
+        result_str = predict(
+            searchspace_json=SEARCHSPACE_JSON,
+            objective_json=OBJECTIVE_JSON,
+            candidates_json=CANDIDATES_JSON,
+            measurements_json=MEASUREMENTS_JSON,
+            surrogate_json=json.dumps({"type": "NonExistentSurrogate"}),
+        )
+        result = json.loads(result_str)
+        assert "error" in result
+        assert "Unknown surrogate type" in result["error"]
