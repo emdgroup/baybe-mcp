@@ -101,6 +101,32 @@ def _serialize_dataframe(df: pd.DataFrame, output_format: str) -> str:
     return json.dumps(df.to_dict(orient="records"))
 
 
+def _prepare_surrogate(surrogate: Any, objective: Any) -> Any:
+    """Ensure the surrogate can model the objective's targets.
+
+    A single-output surrogate cannot model an objective that requires multiple
+    models (a ``ParetoObjective``, or a ``DesirabilityObjective`` with
+    ``as_pre_transformation=False``): its ``fit`` is rejected and/or its
+    ``posterior_stats`` fails to shape the result. Replicating the surrogate
+    yields a ``CompositeSurrogate`` with one sub-model per target, which fits
+    and computes posterior statistics correctly. A surrogate that already
+    handles multiple targets -- one that declares multi-output support, or one
+    that has no ``replicate`` method such as a ``CompositeSurrogate`` -- is left
+    untouched.
+
+    MAINTENANCE: This is a workaround. If BayBE learns to handle multi-model
+    objectives for single-output surrogates directly upstream, remove this and
+    pass the surrogate through unchanged.
+    """
+    if (
+        getattr(objective, "_is_multi_model", False)
+        and not getattr(surrogate, "supports_multi_output", False)
+        and hasattr(surrogate, "replicate")
+    ):
+        surrogate = surrogate.replicate()
+    return surrogate
+
+
 # ---------------------------------------------------------------------------
 # MCP Server
 # ---------------------------------------------------------------------------
@@ -503,7 +529,10 @@ def predict(
             "mean", "std", "var", "mode", and floats in the open interval (0, 1)
             for quantiles (e.g. [0.05, 0.95]). Defaults to ["mean", "std"].
         surrogate_json: Optional surrogate config as a JSON object or string.
-            Defaults to GaussianProcessSurrogate.
+            Defaults to GaussianProcessSurrogate. For multi-target objectives
+            (a ParetoObjective, or a DesirabilityObjective without
+            pre-transformation), a single-output surrogate is automatically
+            replicated per target, yielding per-target output columns.
         output_format: Output format for statistics: "records" (default, list
             of dicts) or "base64" (BayBE native).
 
@@ -549,6 +578,7 @@ def predict(
         else:
             surrogate = GaussianProcessSurrogate()
 
+        surrogate = _prepare_surrogate(surrogate, objective)
         surrogate.fit(searchspace, objective, measurements)
         result = surrogate.posterior_stats(candidates, stats=requested_stats)
 
