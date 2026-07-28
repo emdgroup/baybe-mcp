@@ -237,6 +237,8 @@ string; both are handled transparently.
 | `use_comp_rep` | bool | no | Explain the computational representation (default `false`) |
 | `output_format` | string | no | `"records"` (default) or `"base64"` |
 
+The valid `explainer` values (and the rule that only `KernelExplainer` handles categorical parameters unless `use_comp_rep` is set) are listed in the tool description and via `get_schema("SHAPInsight")`, both derived from the installed BayBE version.
+
 **Returns:** JSON-serialized DataFrame with one row per parameter: a `"parameter"` column plus one `"<target>_importance"` column per target.
 
 ## Config-knowledge tools
