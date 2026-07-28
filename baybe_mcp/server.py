@@ -157,8 +157,9 @@ def _read_cached_json(filename: str):
         return None
 
 
-# Cache dir used by resources at serve time; set during startup.
+# Cache dir and user recipes dir used by resources at serve time; set at startup.
 _CACHE_DIR: str | None = None
+_RECIPES_DIR: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -220,23 +221,36 @@ def _docs_payload() -> str:
 
 
 def _recipes_index_payload() -> str:
-    """Recipes index, from cache if available, else computed live."""
+    """Recipes index, from cache if available, else computed live.
+
+    User recipes are always merged from the recipes dir so newly added recipes
+    appear even against a cache built before they existed.
+    """
     cached = _read_cached_json("recipes_index.json")
     if cached is not None:
         return json.dumps(cached)
 
     from baybe_mcp.recipes import build_recipes_index
 
-    return json.dumps(build_recipes_index())
+    return json.dumps(build_recipes_index(_RECIPES_DIR))
 
 
 def _recipe_file_payload(topic: str, filename: str) -> str:
-    """Raw content of a single recipe file; fetched lazily and cached."""
+    """Raw content of a single recipe file; fetched lazily and cached.
+
+    Doc recipes are fetched from GitHub; user recipes are read from the recipes
+    directory. Cached content (including baked user recipes) is served directly.
+    """
     from baybe_mcp.cache import resolve_cache_dir
 
     cache_path = resolve_cache_dir(_CACHE_DIR) / f"recipes/{topic}/{filename}"
     if cache_path.is_file():
         return cache_path.read_text()
+
+    # User recipes live on disk in the recipes dir, not on GitHub.
+    user_path = _find_user_recipe(_resolve_recipes_dir(), topic, filename)
+    if user_path is not None:
+        return user_path.read_text()
 
     from baybe_mcp.recipes import fetch_recipe
 
@@ -252,6 +266,13 @@ def _recipe_file_payload(topic: str, filename: str) -> str:
     except OSError:
         pass
     return content
+
+
+def _resolve_recipes_dir():
+    """Resolve the serve-time user recipes directory."""
+    from baybe_mcp.cache import resolve_recipes_dir
+
+    return resolve_recipes_dir(_RECIPES_DIR)
 
 
 def _concepts_index_payload() -> str:
@@ -301,7 +322,7 @@ def types_resource() -> str:
     return _types_payload()
 
 
-def _build_types(cache_dir) -> None:
+def _build_types(cache_dir, recipes_dir=None) -> None:
     """Cache builder for baybe://types."""
     from baybe_mcp.introspect import build_types_tree
 
@@ -318,7 +339,7 @@ def schema_resource(type_name: str) -> str:
     return _schema_payload(type_name)
 
 
-def _build_schema(cache_dir) -> None:
+def _build_schema(cache_dir, recipes_dir=None) -> None:
     """Cache builder for baybe://schema/{type}."""
     from baybe_mcp.introspect import build_schema, discover_baybe_classes
 
@@ -336,7 +357,7 @@ def docs_resource() -> str:
     return _docs_payload()
 
 
-def _build_docs(cache_dir) -> None:
+def _build_docs(cache_dir, recipes_dir=None) -> None:
     """Cache builder for baybe://docs."""
     (cache_dir / "docs.json").write_text(json.dumps(_docs_links(), indent=2))
 
@@ -356,13 +377,46 @@ def recipe_file_resource(topic: str, filename: str) -> str:
     return _recipe_file_payload(topic, filename)
 
 
-def _build_recipes(cache_dir) -> None:
-    """Cache builder for the recipes index (files fetched lazily)."""
+def _build_recipes(cache_dir, recipes_dir=None) -> None:
+    """Cache builder for the recipes index.
+
+    Doc recipe files are fetched lazily; user recipe files are baked into the
+    cache now so they are served without touching the recipes dir at run time.
+    """
     from baybe_mcp.recipes import build_recipes_index
 
-    (cache_dir / "recipes_index.json").write_text(
-        json.dumps(build_recipes_index(), indent=2)
+    index = build_recipes_index(recipes_dir)
+    (cache_dir / "recipes_index.json").write_text(json.dumps(index, indent=2))
+
+    if recipes_dir is None:
+        return
+    from pathlib import Path
+
+    recipes_dir = Path(recipes_dir)
+    for entries in index.get("topics", {}).values():
+        for entry in entries:
+            if entry.get("source") != "user":
+                continue
+            uri = entry["resource"].removeprefix("baybe://recipes/")
+            topic, _, filename = uri.partition("/")
+            src = _find_user_recipe(recipes_dir, topic, filename)
+            if src is None:
+                continue
+            dest = cache_dir / "recipes" / topic / filename
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(src.read_text())
+
+
+def _find_user_recipe(recipes_dir, topic: str, filename: str):
+    """Locate a user recipe file on disk given its index topic and filename."""
+    from baybe_mcp.recipes import USER_TOPIC
+
+    candidate = (
+        recipes_dir / filename
+        if topic == USER_TOPIC
+        else recipes_dir / topic / filename
     )
+    return candidate if candidate.is_file() else None
 
 
 @mcp.resource("baybe://concepts")
@@ -380,7 +434,7 @@ def concept_resource(name: str) -> str:
     return _concept_payload(name)
 
 
-def _build_concepts(cache_dir) -> None:
+def _build_concepts(cache_dir, recipes_dir=None) -> None:
     """Cache builder for the concepts index (pages fetched lazily)."""
     from baybe_mcp.concepts import build_concepts_index
 
@@ -880,27 +934,28 @@ def _ensure_resources(args) -> None:
     logger = logging.getLogger(__name__)
     cache_dir = resolve_cache_dir(args.cache_dir)
 
-    global _CACHE_DIR
+    global _CACHE_DIR, _RECIPES_DIR
     _CACHE_DIR = args.cache_dir
+    _RECIPES_DIR = args.recipes_dir
 
     if args.rebuild_resources:
-        build_resources(cache_dir=cache_dir)
+        build_resources(cache_dir=cache_dir, recipes_dir=args.recipes_dir)
         return
 
-    if is_cache_valid(cache_dir):
+    if is_cache_valid(cache_dir, recipes_dir=args.recipes_dir):
         logger.info("Using cached resources at %s", cache_dir)
         return
 
     if args.use_cache:
         raise SystemExit(
             f"No valid resource cache at {cache_dir} (built for a different "
-            "BayBE version or format). Run the 'build' command first, or drop "
-            "--use-cache to allow rebuilding."
+            "BayBE version, format, or set of user recipes). Run the 'build' "
+            "command first, or drop --use-cache to allow rebuilding."
         )
 
     if is_online():
         logger.info("Resource cache stale/missing; rebuilding.")
-        build_resources(cache_dir=cache_dir)
+        build_resources(cache_dir=cache_dir, recipes_dir=args.recipes_dir)
     else:
         logger.warning(
             "Resource cache stale/missing and no network available; serving "
@@ -927,7 +982,7 @@ def _build(args) -> None:
     from baybe_mcp.resources import build_resources
 
     logging.basicConfig(level=args.log_level)
-    build_resources(cache_dir=args.cache_dir)
+    build_resources(cache_dir=args.cache_dir, recipes_dir=args.recipes_dir)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -971,6 +1026,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Cache directory (default: .baybe_mcp_cache in the current dir).",
     )
     run_parser.add_argument(
+        "--recipes-dir",
+        default=None,
+        help="Directory of user-provided .md recipes (default: recipes/).",
+    )
+    run_parser.add_argument(
         "--rebuild-resources",
         action="store_true",
         help="Rebuild the resource cache before serving.",
@@ -988,6 +1048,11 @@ def main(argv: list[str] | None = None) -> None:
         "--cache-dir",
         default=None,
         help="Cache directory (default: .baybe_mcp_cache in the current dir).",
+    )
+    build_parser.add_argument(
+        "--recipes-dir",
+        default=None,
+        help="Directory of user-provided .md recipes (default: recipes/).",
     )
     build_parser.add_argument(
         "--log-level",

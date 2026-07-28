@@ -35,51 +35,85 @@ def _contents(version: str, path: str) -> list | None:
         return None
 
 
-def build_recipes_index() -> dict:
+# Topic under which top-level user recipe files are grouped.
+USER_TOPIC = "Custom_Recipes"
+
+
+def build_recipes_index(recipes_dir=None) -> dict:
     """Build the index of recipe topics and their scenario files.
 
     Returns a dict with the version and, per topic, the list of files with
-    their resource URIs and source. Falls back to a link when the listing is
-    unavailable.
+    their resource URIs and source. Doc recipes are fetched from the examples
+    folder at the version tag; user recipes (local ``.md`` files) are merged in
+    from ``recipes_dir`` under a separate namespace. Falls back to a link when
+    the doc listing is unavailable (user recipes are still included).
     """
     version = get_baybe_version()
+    result: dict = {"baybe_version": version, "topics": {}}
+
     if version is None:
-        return {"baybe_version": None, "note": "Version undetectable.", "topics": {}}
-
-    entries = _contents(version, "examples")
-    if entries is None:
-        return {
-            "baybe_version": version,
-            "link": f"https://github.com/emdgroup/baybe/tree/{version}/examples",
-            "note": "Recipe index unavailable offline; see the linked folder.",
-            "topics": {},
-        }
-
-    topics: dict = {}
-    for entry in entries:
-        if entry.get("type") != "dir":
-            continue
-        topic = entry["name"]
-        files = _contents(version, f"examples/{topic}")
-        if files is None:
-            continue
-        scenario_files = []
-        for f in files:
-            if f.get("type") != "file" or f["name"] in _SKIP_FILES:
-                continue
-            if not f["name"].endswith(".py"):
-                continue
-            scenario_files.append(
-                {
-                    "file": f["name"],
-                    "resource": f"baybe://recipes/{topic}/{f['name']}",
-                    "source": "docs",
-                }
+        result["note"] = "Version undetectable."
+    else:
+        entries = _contents(version, "examples")
+        if entries is None:
+            result["link"] = (
+                f"https://github.com/emdgroup/baybe/tree/{version}/examples"
             )
-        if scenario_files:
-            topics[topic] = scenario_files
+            result["note"] = "Recipe index unavailable offline; see the linked folder."
+        else:
+            topics: dict = {}
+            for entry in entries:
+                if entry.get("type") != "dir":
+                    continue
+                topic = entry["name"]
+                files = _contents(version, f"examples/{topic}")
+                if files is None:
+                    continue
+                scenario_files = []
+                for f in files:
+                    if f.get("type") != "file" or f["name"] in _SKIP_FILES:
+                        continue
+                    if not f["name"].endswith(".py"):
+                        continue
+                    scenario_files.append(
+                        {
+                            "file": f["name"],
+                            "resource": f"baybe://recipes/{topic}/{f['name']}",
+                            "source": "docs",
+                        }
+                    )
+                if scenario_files:
+                    topics[topic] = scenario_files
+            result["topics"] = topics
 
-    return {"baybe_version": version, "topics": topics}
+    _merge_user_recipes(result["topics"], recipes_dir)
+    return result
+
+
+def _merge_user_recipes(topics: dict, recipes_dir) -> None:
+    """Merge user-provided ``.md`` recipes into the topics mapping in place.
+
+    Subfolders become topics; top-level files are grouped under ``USER_TOPIC``.
+    User recipes live in a separate namespace and never override doc recipes:
+    if a user topic name collides with a doc topic, user files are appended.
+    """
+    from baybe_mcp.cache import resolve_recipes_dir
+
+    directory = resolve_recipes_dir(recipes_dir)
+    if not directory.is_dir():
+        return
+
+    for path in sorted(directory.rglob("*.md")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(directory)
+        topic = rel.parts[0] if len(rel.parts) > 1 else USER_TOPIC
+        entry = {
+            "file": path.name,
+            "resource": f"baybe://recipes/{topic}/{path.name}",
+            "source": "user",
+        }
+        topics.setdefault(topic, []).append(entry)
 
 
 def fetch_recipe(topic: str, filename: str) -> str | None:

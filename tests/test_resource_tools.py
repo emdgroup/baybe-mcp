@@ -44,6 +44,16 @@ class TestResourceToolsContent:
         import baybe_mcp.recipes as recipes
 
         monkeypatch.setattr(server, "_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(server, "_RECIPES_DIR", str(tmp_path / "recipes"))
         monkeypatch.setattr(recipes, "fetch_text", lambda *a, **k: None)
         result = json.loads(server.get_recipe("Serialization", "validate_config.py"))
         assert "error" in result
+
+    def test_get_recipe_user(self, monkeypatch, tmp_path):
+        recipes_dir = tmp_path / "recipes"
+        recipes_dir.mkdir()
+        (recipes_dir / "howto.md").write_text("# How To")
+
+        monkeypatch.setattr(server, "_CACHE_DIR", str(tmp_path / "cache"))
+        monkeypatch.setattr(server, "_RECIPES_DIR", str(recipes_dir))
+        assert server.get_recipe("Custom_Recipes", "howto.md") == "# How To"

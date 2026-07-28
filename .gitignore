@@ -6,3 +6,4 @@ build/
 .venv/
 .pytest_cache/
 .baybe_mcp_cache/
+recipes/
